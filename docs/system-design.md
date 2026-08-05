@@ -214,7 +214,7 @@ stateDiagram-v2
     IDLE --> WATERING: 認証済みの新規request_id
     WATERING --> COOLDOWN: DOSE_MS経過
     COOLDOWN --> IDLE: クールダウン終了
-    WATERING --> IDLE: 緊急停止
+    WATERING --> COOLDOWN: 緊急停止
 ```
 
 ### 制御パラメータ
@@ -238,7 +238,7 @@ stateDiagram-v2
 | Phase 2 | 湿潤時の中止 | 2週間以上の実測から、確実に湿っている場合だけ定期給水をスキップ |
 | Phase 3 | 乾燥起点 | 季節・土・挿入位置の誤差を評価した後に検討 |
 
-初期段階では、時間制御を主、センサーを安全上の拒否条件として扱う。
+初期段階では時間制御を主とし、センサー値は観測・記録だけに使う。
 
 ## 12. 流量校正
 
