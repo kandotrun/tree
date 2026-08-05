@@ -161,6 +161,7 @@ flowchart TB
 ### 安全性
 
 - 電源投入直後は必ずpump OFF
+- U101基板上の10kΩゲートとソース間のプルダウン（R1）と、起動直後にGPIO26をLOWへ設定するファームウェアを併用する
 - 通信が切れてもATOM側のタイマーで停止
 - クライアントから任意の長時間運転を要求できない
 - 異常時は給水しない方向へ倒す
@@ -171,6 +172,8 @@ flowchart TB
 - ATOMをインターネットへ公開しない
 - ルーターでポート転送しない
 - APIにランダムな認証トークンを設定する
+- 初期版のHTTPは信頼できるWPA2/WPA3 LAN内だけで使い、ゲスト端末や不特定端末と同じネットワークへ置かない
+- LANの認証情報が漏えいした疑いがある場合は、Wi-Fi認証情報とAPIトークンを交換する
 - Hermesには任意のHTTPや任意の秒数ではなく、固定コマンドだけを許可する
 - Wi-FiパスワードとAPIトークンをGitへコミットしない
 
@@ -213,9 +216,18 @@ stateDiagram-v2
     BOOT_GUARD --> IDLE
     IDLE --> WATERING: 認証済みの新規request_id
     WATERING --> COOLDOWN: DOSE_MS経過
+    WATERING --> COOLDOWN: MAX_RUN_MS到達
     COOLDOWN --> IDLE: クールダウン終了
-    WATERING --> IDLE: 緊急停止
+    WATERING --> COOLDOWN: 緊急停止
+    BOOT_GUARD --> ERROR: 初期化異常
+    IDLE --> ERROR: 内部異常
+    WATERING --> ERROR: 永続化・内部異常
+    COOLDOWN --> ERROR: 内部異常
 ```
+
+通常の`millis()`状態機械に加え、給水開始時に独立したone-shotタイマーを`MAX_RUN_MS`で起動する。
+メインループやWi-Fi処理が停止してもタイマー側でGPIO26をLOWへ落とす。
+タスクWatchdogによる再起動を予備停止手段とする。
 
 ### 制御パラメータ
 
@@ -238,7 +250,7 @@ stateDiagram-v2
 | Phase 2 | 湿潤時の中止 | 2週間以上の実測から、確実に湿っている場合だけ定期給水をスキップ |
 | Phase 3 | 乾燥起点 | 季節・土・挿入位置の誤差を評価した後に検討 |
 
-初期段階では、時間制御を主、センサーを安全上の拒否条件として扱う。
+初期段階では時間制御を主とし、センサー値は観測・記録だけに使う。
 
 ## 12. 流量校正
 
@@ -307,7 +319,7 @@ DOSE_MS   = dose_s * 1000
 | 障害 | 影響 | 対策 |
 |---|---|---|
 | Hermesが命令を重複送信 | 過剰給水 | `request_id`重複拒否、クールダウン |
-| 給水中に通信断 | 停止不能の懸念 | ATOMのローカルタイマーで停止 |
+| 給水中に通信断またはメインループ停止 | 停止不能の懸念 | 独立one-shotタイマーでGPIO26をLOW、Watchdogを予備停止にする |
 | ATOM再起動 | GPIO誤動作 | 起動直後にGPIO26をLOW、BOOT_GUARD |
 | ポンプ始動時に電圧低下 | ATOM再起動 | 5V / 2A以上、短いUSBケーブル、実機試験 |
 | 吐出チューブ脱落 | 床へ放水 | 園芸ピンで固定、受け皿側へ配置 |
@@ -350,6 +362,7 @@ DOSE_MS   = dose_s * 1000
 
 - [M5Stack公式 ATOM Lite](https://docs.m5stack.com/en/core/ATOM%20Lite)
 - [M5Stack公式 Unit Watering U101](https://docs.m5stack.com/ja/unit/watering)
+- [M5Stack公式 Unit Watering U101回路図PDF](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/729/U101_Unit-Watering_SCH.pdf)
 - [M5Stack公式 Unit Watering Home Assistant Integration](https://docs.m5stack.com/en/homeassistant/sensor/unit_watering_sensor)
 - [スイッチサイエンス ATOM Lite](https://www.switch-science.com/products/6262)
 - [スイッチサイエンス Unit Watering U101](https://www.switch-science.com/products/6913)

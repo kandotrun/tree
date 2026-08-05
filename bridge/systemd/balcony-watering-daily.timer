@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the balcony watering schedule every morning
+Documentation=https://github.com/kandotrun/tree
+
+[Timer]
+OnCalendar=*-*-* 07:30:00
+RandomizedDelaySec=120
+Unit=balcony-watering-daily.service
+
+[Install]
+WantedBy=timers.target

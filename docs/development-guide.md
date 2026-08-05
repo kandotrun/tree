@@ -74,6 +74,10 @@ ATOM LiteのGroveカスタムポートをU101へ付属ケーブルで接続す�
 | PUMP_EN | GPIO26 | ポンプON/OFF |
 | Analog Output | GPIO32 | 水分センサーADC |
 
+U101公式回路図では、active-highのN-MOSFET（Q1）のゲートとソース間に10kΩプルダウン（R1）が実装されている。
+ATOMのGPIOがリセット中にhigh-impedanceでもポンプ入力はLOWへ保持される。
+これに加えて、ファームウェアは最初のハードウェア操作でGPIO26をLOWへ設定し、実機の10回電源試験でも確認する。
+
 接続・取り外しはUSB電源を抜いた状態で行う。
 
 ### 3.2 チューブ
@@ -142,7 +146,7 @@ ls /dev/cu.*
 
 ```ini
 [env:m5stack-atom]
-platform = espressif32@6.7.0
+platform = platformio/espressif32@6.13.0
 board = m5stack-atom
 framework = arduino
 upload_speed = 1500000
@@ -152,7 +156,8 @@ build_flags =
     -DCORE_DEBUG_LEVEL=3
 
 lib_deps =
-    m5stack/M5Unified
+    bblanchon/ArduinoJson@7.4.3
+    adafruit/Adafruit NeoPixel@1.15.5
 ```
 
 アップロードが不安定な場合は`upload_speed`を`115200`へ下げて再試行する。
@@ -169,8 +174,13 @@ lib_deps =
 #define API_TOKEN "CHANGE_ME_TO_A_LONG_RANDOM_VALUE"
 
 #define DEVICE_NAME "balcony-watering"
+#define FIRMWARE_VERSION "0.1.0"
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
+#define LED_PIN 27
+
+// 実機の事前確認が終わるまでfalseのままにする
+#define WATERING_ARMED false
 
 #define DOSE_MS 10000UL
 #define MAX_RUN_MS 15000UL
@@ -252,7 +262,10 @@ stateDiagram-v2
 | COOLDOWN | LOW | 拒否 |
 | ERROR | LOW | 拒否 |
 
-`delay(DOSE_MS)`は使わず、`millis()`を使った非ブロッキング制御にする。これにより給水中でも緊急停止と状態確認を受けられる。
+`delay(DOSE_MS)`は使わず、`millis()`を使った非ブロッキング制御にする。
+これにより給水中でも緊急停止と状態確認を受けられる。
+給水開始時にはメインループから独立したone-shotタイマーを`MAX_RUN_MS`で起動し、ループ停止時もGPIO26をLOWへ落とす。
+タスクWatchdogはその予備停止手段とする。
 
 ## 10. HTTP API仕様
 
@@ -260,7 +273,7 @@ ATOMは自宅LAN内でのみHTTPを提供する。
 
 ### 10.1 認証
 
-操作APIは次のヘッダーを要求する。
+`/healthz`以外の`/v1/*` APIは次のヘッダーを要求する。
 
 ```http
 Authorization: Bearer <API_TOKEN>
@@ -291,6 +304,8 @@ Authorization: Bearer <API_TOKEN>
   "moisture_adc": 1512,
   "last_request_id": "01J...",
   "remaining_ms": 0,
+  "last_runtime_ms": 10000,
+  "last_stop_reason": "DOSE_COMPLETE",
   "firmware_version": "0.1.0"
 }
 ```
@@ -318,7 +333,7 @@ HTTP/1.1 202 Accepted
   "accepted": true,
   "request_id": "01J...",
   "state": "WATERING",
-  "scheduled_ms": 74000
+  "scheduled_ms": 10000
 }
 ```
 
@@ -329,7 +344,7 @@ HTTP/1.1 202 Accepted
 | 400 | `request_id`がない、形式不正 |
 | 401 | 認証失敗 |
 | 409 | 給水中、または同じ`request_id` |
-| 423 | BOOT_GUARDまたはERROR |
+| 423 | BOOT_GUARD、ERROR、または`WATERING_ARMED=false` |
 | 429 | クールダウン中 |
 
 ### 10.5 `POST /v1/stop`
@@ -406,16 +421,23 @@ pio device monitor --port /dev/cu.usbserial-XXXX --baud 115200
 - [ ] `/healthz`が200を返す
 - [ ] 起動中にポンプが動かない
 
-### Test 2: 認証
+### Test 2: 認証と未アームガード
+
+`WATERING_ARMED=false`のまま、`BOOT_GUARD`終了後に確認する。
 
 - [ ] トークンなしの`POST /v1/water`が401
 - [ ] 誤トークンが401
-- [ ] 正しいトークンのみ202
+- [ ] 正しいトークンでも423 `not_armed`となる
+- [ ] どの場合もGPIO26がLOWのままで、ポンプが動かない
 
-### Test 3: 10秒給水
+### Test 3: 計量容器への10秒給水
 
-吐出先を計量容器へ向ける。
+U101を接続し、吐出先を計量容器へ固定してから、ローカルの`config.h`だけを
+`WATERING_ARMED=true`へ変更して再書き込みする。再起動後は5分の`BOOT_GUARD`が
+終了し、`/v1/status`が`IDLE`を返すまで待つ。サンプル設定の
+`config.example.h`は`false`のままコミットする。
 
+- [ ] 正しいトークンの`POST /v1/water`だけが202を返す
 - [ ] 10秒で自動停止する
 - [ ] 通信を途中で切っても停止する
 - [ ] 給水中の再要求が409
@@ -487,6 +509,7 @@ ATOM_REQUEST_TIMEOUT_SEC=5
 STATUS_POLL_INTERVAL_SEC=2
 STATUS_POLL_TIMEOUT_SEC=240
 MIN_WATER_INTERVAL_HOURS=72
+BALCONY_WATERING_DB_PATH=/var/lib/balcony-watering/state.db
 ```
 
 本番ファイルは権限を制限する。
@@ -610,9 +633,9 @@ Hermesから自宅ミニPCへ接続できる既存経路を利用する。ATOM�
 
 | Hermes上の操作 | ミニPCで実行する固定コマンド |
 |---|---|
-| 木へ水をあげる | `/opt/balcony-watering/bin/water-tree` |
-| 状態を確認する | `/opt/balcony-watering/bin/water-tree-status` |
-| 緊急停止する | `/opt/balcony-watering/bin/water-tree-stop` |
+| 木へ水をあげる | `/opt/balcony-watering/venv/bin/water-tree` |
+| 状態を確認する | `/opt/balcony-watering/venv/bin/water-tree-status` |
+| 緊急停止する | `/opt/balcony-watering/venv/bin/water-tree-stop` |
 
 Hermesへ次の制約を与える。
 
@@ -639,13 +662,13 @@ Description=Check balcony watering schedule every morning
 
 [Timer]
 OnCalendar=*-*-* 07:30:00
-Persistent=true
 RandomizedDelaySec=120
 
 [Install]
 WantedBy=timers.target
 ```
 
+07:30の実行を逃した日は、再起動後に遅れて給水せず翌日の判定まで待つ。
 対応するserviceは`water-tree-schedule`を実行する。
 
 定期実行を有効化する前に確認する。
@@ -726,6 +749,8 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 | BR-06 | 残り3回分未満 | 補充警告 |
 | BR-07 | refill | 18,000mLへリセット |
 | BR-08 | 72時間未満のschedule | 給水しない |
+| BR-09 | 受付後に緊急停止 | UNKNOWN、残量を減算せず自動再実行しない |
+| BR-10 | POST時に競合またはクールダウン応答 | UNKNOWNとして固定し、自動再実行しない |
 
 ### 現物試験
 

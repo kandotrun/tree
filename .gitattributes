@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.cpp text eol=lf
+*.h text eol=lf
+*.ini text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

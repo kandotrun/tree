@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "balcony-watering-bridge"
+version = "0.1.0"
+description = "Fail-safe Linux bridge for an M5Stack balcony watering controller"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Kan Ninomiya" }]
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.3,<10",
+  "ruff>=0.9,<1",
+]
+
+[project.scripts]
+water-tree = "balcony_watering.cli:water_main"
+water-tree-status = "balcony_watering.cli:status_main"
+water-tree-stop = "balcony_watering.cli:stop_main"
+water-tree-refill = "balcony_watering.cli:refill_main"
+water-tree-schedule = "balcony_watering.cli:schedule_main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["balcony_watering"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
