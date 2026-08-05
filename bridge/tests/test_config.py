@@ -49,7 +49,11 @@ def test_settings_accept_safe_lan_configuration() -> None:
         ("ATOM_API_TOKEN", "CHANGE_ME_TO_A_LONG_RANDOM_VALUE", "placeholder"),
         ("DOSE_ML", "0", "positive"),
         ("TANK_USABLE_ML", "400", "at least DOSE_ML"),
+        ("LOW_TANK_DOSES", "100", "usable tank capacity"),
         ("STATUS_POLL_INTERVAL_SEC", "0", "positive"),
+        ("STATUS_POLL_TIMEOUT_SEC", "1", "at least the poll interval"),
+        ("ATOM_URL", "http://192.168.1.50:99999", "invalid port"),
+        ("BALCONY_WATERING_DB_PATH", "", "must not be empty"),
     ],
 )
 def test_settings_reject_unsafe_or_invalid_values(key: str, value: str, message: str) -> None:

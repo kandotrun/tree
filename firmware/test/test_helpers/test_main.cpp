@@ -4,9 +4,11 @@
 #include <unity.h>
 
 #include "api_contract.h"
+#include "pump_safety_gate.h"
 #include "sensor_filter.h"
 
 using watering::HttpDecision;
+using watering::PumpSafetyGate;
 using watering::StartResult;
 using watering::constant_time_equals;
 using watering::http_decision;
@@ -73,6 +75,20 @@ void test_median_filter_handles_empty_and_even_inputs() {
   TEST_ASSERT_EQUAL_UINT16(25U, median_u16(values, 4U));
 }
 
+void test_safety_cutoff_cannot_be_overridden_by_stale_controller_state() {
+  PumpSafetyGate gate;
+  TEST_ASSERT_FALSE(gate.allows_output(true));
+  gate.arm();
+  TEST_ASSERT_TRUE(gate.allows_output(true));
+
+  gate.cutoff();
+
+  TEST_ASSERT_FALSE(gate.allows_output(true));
+  TEST_ASSERT_FALSE(gate.allows_output(false));
+  gate.arm();
+  TEST_ASSERT_TRUE(gate.allows_output(true));
+}
+
 }  // namespace
 
 int main(int, char**) {
@@ -81,5 +97,6 @@ int main(int, char**) {
   RUN_TEST(test_constant_time_token_comparison_handles_mismatch_and_bounds);
   RUN_TEST(test_median_filter_rejects_single_large_outlier);
   RUN_TEST(test_median_filter_handles_empty_and_even_inputs);
+  RUN_TEST(test_safety_cutoff_cannot_be_overridden_by_stale_controller_state);
   return UNITY_END();
 }

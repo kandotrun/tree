@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import TracebackType
 
 import pytest
 
@@ -28,6 +30,41 @@ def test_initialize_creates_full_tank_once(tmp_path: Path) -> None:
     store.initialize()
 
     assert store.tank_remaining_ml() == 12_000
+
+
+def test_read_operations_close_their_sqlite_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = make_store(tmp_path)
+    connection = store._connect()
+    close_called = False
+    original_close = connection.close
+
+    class TrackingConnection:
+        def __enter__(self) -> sqlite3.Connection:
+            return connection.__enter__()
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> bool | None:
+            return connection.__exit__(exc_type, exc_value, traceback)
+
+        def close(self) -> None:
+            nonlocal close_called
+            close_called = True
+            original_close()
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(connection, name)
+
+    tracking_connection = TrackingConnection()
+    monkeypatch.setattr(store, "_connect", lambda: tracking_connection)
+
+    assert store.tank_remaining_ml() == 18_000
+    assert close_called is True
 
 
 def test_duplicate_request_id_is_rejected(tmp_path: Path) -> None:

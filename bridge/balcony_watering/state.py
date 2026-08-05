@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,7 +65,7 @@ class StateStore:
     def initialize(self) -> None:
         try:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 connection.execute("PRAGMA journal_mode = WAL")
                 connection.executescript(
                     """
@@ -219,7 +220,7 @@ class StateStore:
             parameters.append(started_at)
         parameters.extend((request_id, *allowed_from))
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 cursor = connection.execute(
                     f"""
                     UPDATE watering_events
@@ -332,7 +333,7 @@ class StateStore:
 
     def get_event(self, request_id: str) -> WateringEvent:
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 row = connection.execute(
                     "SELECT * FROM watering_events WHERE request_id = ?",
                     (request_id,),
@@ -345,7 +346,7 @@ class StateStore:
 
     def unresolved_event(self) -> WateringEvent | None:
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 row = connection.execute(
                     """
                     SELECT * FROM watering_events
@@ -360,7 +361,7 @@ class StateStore:
 
     def tank_remaining_ml(self) -> int:
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 row = connection.execute(
                     "SELECT remaining_ml FROM tank_state WHERE id = 1"
                 ).fetchone()
@@ -376,7 +377,7 @@ class StateStore:
             raise StateError("refill amount must be between zero and configured tank capacity")
         timestamp = utc_now_text() if updated_at is None else updated_at
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 cursor = connection.execute(
                     "UPDATE tank_state SET remaining_ml = ?, updated_at = ? WHERE id = 1",
                     (target, timestamp),
@@ -389,7 +390,7 @@ class StateStore:
 
     def last_success_at(self) -> str | None:
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection, connection:
                 row = connection.execute(
                     """
                     SELECT completed_at FROM watering_events

@@ -116,6 +116,19 @@ void test_manual_stop_is_immediate_and_enters_cooldown() {
   TEST_ASSERT_EQUAL_STRING("MANUAL_STOP", controller.last_stop_reason());
 }
 
+void test_stop_while_idle_enters_cooldown_without_claiming_runtime() {
+  WateringController controller(safe_config(), 0U);
+  advance_to_idle(controller);
+
+  controller.stop(300001U);
+
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(State::Cooldown),
+                        static_cast<int>(controller.state()));
+  TEST_ASSERT_FALSE(controller.pump_on());
+  TEST_ASSERT_EQUAL_UINT32(0U, controller.last_runtime_ms());
+  TEST_ASSERT_EQUAL_STRING("", controller.last_stop_reason());
+}
+
 void test_busy_cooldown_and_duplicate_requests_are_rejected() {
   WateringController controller(safe_config(), 0U);
   advance_to_idle(controller);
@@ -212,6 +225,7 @@ int main(int, char**) {
   RUN_TEST(test_dose_timer_stops_locally_without_network);
   RUN_TEST(test_absolute_max_runtime_wins_if_dose_is_longer);
   RUN_TEST(test_manual_stop_is_immediate_and_enters_cooldown);
+  RUN_TEST(test_stop_while_idle_enters_cooldown_without_claiming_runtime);
   RUN_TEST(test_busy_cooldown_and_duplicate_requests_are_rejected);
   RUN_TEST(test_restored_request_id_is_rejected_after_reboot);
   RUN_TEST(test_invalid_request_ids_are_rejected);

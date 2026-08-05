@@ -6,12 +6,11 @@
 namespace watering {
 
 uint16_t median_u16(const uint16_t* values, std::size_t count) {
-  constexpr std::size_t kMaximumSamples = 15U;
   if (values == nullptr || count == 0U) {
     return 0U;
   }
-  const std::size_t used = std::min(count, kMaximumSamples);
-  std::array<uint16_t, kMaximumSamples> sorted{};
+  const std::size_t used = std::min(count, kMaximumMedianSamples);
+  std::array<uint16_t, kMaximumMedianSamples> sorted{};
   std::copy_n(values, used, sorted.begin());
   std::sort(sorted.begin(), sorted.begin() + used);
   if ((used % 2U) == 1U) {

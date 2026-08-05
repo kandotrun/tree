@@ -42,6 +42,23 @@ class ContractHandler(BaseHTTPRequestHandler):
                     "pump": False,
                     "moisture_adc": 1500,
                     "remaining_ms": 0,
+                    "last_request_id": "",
+                    "last_runtime_ms": 0,
+                    "last_stop_reason": "",
+                },
+            )
+            return
+        if type(self).status_calls == 2:
+            self._send_json(
+                200,
+                {
+                    "state": "WATERING",
+                    "pump": True,
+                    "moisture_adc": 1450,
+                    "last_request_id": "request-1",
+                    "last_runtime_ms": 0,
+                    "last_stop_reason": "",
+                    "remaining_ms": 9_000,
                 },
             )
             return

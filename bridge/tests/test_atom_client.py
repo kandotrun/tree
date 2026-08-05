@@ -102,6 +102,20 @@ def test_status_sends_bearer_token(fake_atom: tuple[str, type[FakeAtomHandler]])
     assert handler.observed_requests[-1]["authorization"] == f"Bearer {'t' * 32}"
 
 
+def test_status_accepts_empty_last_stop_reason_emitted_before_first_completion(
+    fake_atom: tuple[str, type[FakeAtomHandler]],
+) -> None:
+    base_url, handler = fake_atom
+    handler.route_responses[("GET", "/v1/status")] = (
+        200,
+        b'{"state":"IDLE","pump":false,"last_stop_reason":""}',
+    )
+
+    result = make_client(base_url).status()
+
+    assert result["last_stop_reason"] == ""
+
+
 def test_status_omits_unknown_fields_and_rejects_invalid_state(
     fake_atom: tuple[str, type[FakeAtomHandler]],
 ) -> None:

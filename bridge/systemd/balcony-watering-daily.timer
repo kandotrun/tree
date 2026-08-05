@@ -4,7 +4,6 @@ Documentation=https://github.com/kandotrun/tree
 
 [Timer]
 OnCalendar=*-*-* 07:30:00
-Persistent=true
 RandomizedDelaySec=120
 Unit=balcony-watering-daily.service
 

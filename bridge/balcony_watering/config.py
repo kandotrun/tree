@@ -122,11 +122,12 @@ class Settings:
         if poll_timeout < poll_interval:
             raise ConfigError("STATUS_POLL_TIMEOUT_SEC must be at least the poll interval")
 
-        database_path = Path(
+        raw_database_path = str(
             mapping.get("BALCONY_WATERING_DB_PATH", "/var/lib/balcony-watering/state.db")
-        ).expanduser()
-        if not str(database_path).strip():
+        ).strip()
+        if not raw_database_path:
             raise ConfigError("BALCONY_WATERING_DB_PATH must not be empty")
+        database_path = Path(raw_database_path).expanduser()
 
         return cls(
             atom_url=atom_url,

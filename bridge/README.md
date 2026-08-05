@@ -51,6 +51,9 @@ sudoedit /etc/balcony-watering.env
 `ATOM_URL` must be an `http://` origin on a private/local address. Set
 `DOSE_ML` only after flow calibration; it is an estimate for tank accounting,
 not a client-controlled pump duration. Firmware owns the actual duration.
+Because the initial ATOM firmware does not terminate TLS, use a trusted
+WPA2/WPA3 LAN with no guest clients and never expose the API through public
+ingress. Rotate the shared token if the LAN credentials may be compromised.
 
 Generate the same API token for firmware and bridge with, for example:
 
@@ -90,6 +93,10 @@ manual pilot all pass:
 sudo systemctl enable --now balcony-watering-daily.timer
 ```
 
+The timer intentionally does not catch up a missed 07:30 run after reboot. A
+late boot skips that day instead of initiating unattended watering at an
+unexpected time.
+
 ## Output and exit codes
 
 Every invocation prints one UTF-8 JSON object. `message_ja` is suitable for
@@ -101,9 +108,9 @@ direct display by Hermes.
 | 2 | Invalid/missing configuration |
 | 3 | ATOM offline |
 | 4 | Definitively rejected, or estimated tank below one dose |
-| 5 | Result unknown; inspect hardware and DB, do not retry |
+| 5 | Result unknown, including unexpected `water`/`schedule` errors; inspect hardware and DB, do not retry |
 | 6 | Local SQLite failure |
-| 1 | Unexpected internal error |
+| 1 | Unexpected internal error in a non-actuating command |
 
 The SQLite DB defaults to `/var/lib/balcony-watering/state.db`. Back it up only
 while commands are stopped, or use SQLite's online backup facilities.

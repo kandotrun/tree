@@ -131,6 +131,30 @@ def test_cli_reports_unexpected_errors_as_safe_json(
     assert secret not in str(result["message_ja"])
 
 
+def test_cli_treats_unexpected_water_error_as_unknown_physical_state(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret = "unexpected-sensitive-detail"
+
+    def fail_build() -> FakeService:
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(cli, "build_service", fail_build)
+
+    return_code = cli.main(["water"])
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+
+    assert return_code == 5
+    assert result["result"] == "UNKNOWN"
+    assert "給水結果は未確定" in str(result["message_ja"])
+    assert "再実行せず" in str(result["message_ja"])
+    assert "現物を確認" in str(result["message_ja"])
+    assert "RuntimeError" in captured.err
+    assert secret not in captured.out
+    assert secret not in captured.err
+
+
 def test_cli_rejects_unknown_commands_and_extra_arguments_as_json(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

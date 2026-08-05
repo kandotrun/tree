@@ -85,15 +85,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             }
         )
         return 6
-    except Exception:
+    except Exception as exc:
+        print(f"unexpected internal error: {type(exc).__name__}", file=sys.stderr)
+        if command in {"water", "schedule"}:
+            internal_result = "UNKNOWN"
+            internal_exit_code = 5
+            internal_message = (
+                "予期しない内部エラーが発生し、給水結果は未確定です。"
+                "安全のため再実行せず、現物を確認してください。"
+            )
+        else:
+            internal_result = "INTERNAL_ERROR"
+            internal_exit_code = 1
+            internal_message = "予期しない内部エラーのため、操作を中止しました。"
         _print_result(
             {
                 "ok": False,
-                "result": "INTERNAL_ERROR",
-                "message_ja": "予期しない内部エラーのため、操作を中止しました。",
+                "result": internal_result,
+                "message_ja": internal_message,
             }
         )
-        return 1
+        return internal_exit_code
 
     _print_result(result)
     return _EXIT_CODES.get(str(result.get("result")), 0)

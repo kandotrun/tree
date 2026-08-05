@@ -74,6 +74,10 @@ ATOM LiteのGroveカスタムポートをU101へ付属ケーブルで接続す�
 | PUMP_EN | GPIO26 | ポンプON/OFF |
 | Analog Output | GPIO32 | 水分センサーADC |
 
+U101公式回路図では、active-highのN-MOSFET（Q1）のゲートとソース間に10kΩプルダウン（R1）が実装されている。
+ATOMのGPIOがリセット中にhigh-impedanceでもポンプ入力はLOWへ保持される。
+これに加えて、ファームウェアは最初のハードウェア操作でGPIO26をLOWへ設定し、実機の10回電源試験でも確認する。
+
 接続・取り外しはUSB電源を抜いた状態で行う。
 
 ### 3.2 チューブ
@@ -258,7 +262,10 @@ stateDiagram-v2
 | COOLDOWN | LOW | 拒否 |
 | ERROR | LOW | 拒否 |
 
-`delay(DOSE_MS)`は使わず、`millis()`を使った非ブロッキング制御にする。これにより給水中でも緊急停止と状態確認を受けられる。
+`delay(DOSE_MS)`は使わず、`millis()`を使った非ブロッキング制御にする。
+これにより給水中でも緊急停止と状態確認を受けられる。
+給水開始時にはメインループから独立したone-shotタイマーを`MAX_RUN_MS`で起動し、ループ停止時もGPIO26をLOWへ落とす。
+タスクWatchdogはその予備停止手段とする。
 
 ## 10. HTTP API仕様
 
@@ -337,7 +344,7 @@ HTTP/1.1 202 Accepted
 | 400 | `request_id`がない、形式不正 |
 | 401 | 認証失敗 |
 | 409 | 給水中、または同じ`request_id` |
-| 423 | BOOT_GUARDまたはERROR |
+| 423 | BOOT_GUARD、ERROR、または`WATERING_ARMED=false` |
 | 429 | クールダウン中 |
 
 ### 10.5 `POST /v1/stop`

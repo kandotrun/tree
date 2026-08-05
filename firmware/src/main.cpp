@@ -4,14 +4,18 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <driver/gpio.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
+#include <esp_timer.h>
 
+#include <atomic>
 #include <array>
 #include <memory>
 
 #include "api_contract.h"
 #include "config.h"
+#include "pump_safety_gate.h"
 #include "sensor_filter.h"
 #include "watering_controller.h"
 
@@ -19,6 +23,7 @@ namespace {
 
 using watering::ControllerConfig;
 using watering::HttpDecision;
+using watering::PumpSafetyGate;
 using watering::StartResult;
 using watering::State;
 using watering::WateringController;
@@ -27,6 +32,7 @@ constexpr uint16_t kHttpPort = 80U;
 constexpr std::size_t kTokenMaxLength = 256U;
 constexpr std::size_t kMaximumRequestBodyBytes = 256U;
 constexpr std::size_t kMoistureSampleCount = 9U;
+static_assert(kMoistureSampleCount <= watering::kMaximumMedianSamples);
 constexpr uint32_t kSuccessLedMs = 1000U;
 constexpr uint8_t kLedBrightness = 24U;
 constexpr char kPreferencesNamespace[] = "watering";
@@ -48,6 +54,9 @@ wl_status_t previous_wifi_status = WL_NO_SHIELD;
 bool preferences_ready = false;
 bool network_config_valid = false;
 bool watchdog_ready = false;
+esp_timer_handle_t pump_safety_timer = nullptr;
+std::atomic<bool> pump_safety_timer_active{false};
+PumpSafetyGate pump_safety_gate;
 
 bool deadline_in_future(uint32_t deadline, uint32_t now) {
   return static_cast<int32_t>(deadline - now) > 0;
@@ -115,8 +124,57 @@ void update_led(uint32_t now) {
   }
 }
 
+void pump_safety_timer_callback(void*) {
+  // Close the gate before touching GPIO so a concurrent loop cannot reassert HIGH.
+  pump_safety_gate.cutoff();
+  pump_safety_timer_active.store(false);
+  gpio_set_level(static_cast<gpio_num_t>(PUMP_PIN), 0U);
+}
+
+bool initialize_pump_safety_timer() {
+  esp_timer_create_args_t arguments{};
+  arguments.callback = pump_safety_timer_callback;
+  arguments.dispatch_method = ESP_TIMER_TASK;
+  arguments.name = "pump-cutoff";
+  return esp_timer_create(&arguments, &pump_safety_timer) == ESP_OK;
+}
+
+void disarm_pump_safety_timer() {
+  if (pump_safety_timer != nullptr && pump_safety_timer_active.exchange(false)) {
+    (void)esp_timer_stop(pump_safety_timer);
+  }
+}
+
+bool arm_pump_safety_timer() {
+  if (pump_safety_timer == nullptr) {
+    return false;
+  }
+  disarm_pump_safety_timer();
+  pump_safety_gate.arm();
+  pump_safety_timer_active.store(true);
+  const uint64_t maximum_runtime_us =
+      static_cast<uint64_t>(MAX_RUN_MS) * 1000ULL;
+  if (esp_timer_start_once(pump_safety_timer, maximum_runtime_us) != ESP_OK) {
+    pump_safety_timer_active.store(false);
+    pump_safety_gate.cutoff();
+    return false;
+  }
+  return true;
+}
+
+bool pump_output_should_run() {
+  return controller != nullptr &&
+         pump_safety_gate.allows_output(controller->pump_on());
+}
+
 void apply_pump_output() {
-  const bool should_run = controller != nullptr && controller->pump_on();
+  const bool controller_requests_output =
+      controller != nullptr && controller->pump_on();
+  if (!controller_requests_output) {
+    disarm_pump_safety_timer();
+  }
+  const bool should_run =
+      pump_safety_gate.allows_output(controller_requests_output);
   digitalWrite(PUMP_PIN, should_run ? HIGH : LOW);
 }
 
@@ -171,7 +229,7 @@ void handle_status() {
   const uint32_t now = millis();
   JsonDocument response;
   response["state"] = watering::state_name(controller->state());
-  response["pump"] = controller->pump_on();
+  response["pump"] = pump_output_should_run();
   response["uptime_ms"] = now;
   response["wifi_rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   response["moisture_adc"] = moisture_median;
@@ -222,6 +280,13 @@ void handle_water() {
     return;
   }
 
+  if (!arm_pump_safety_timer()) {
+    controller->set_error("SAFETY_TIMER_ARM_FAILED", millis());
+    apply_pump_output();
+    Serial.println("water rejected reason=SAFETY_TIMER_ARM_FAILED");
+    send_error(500, "safety_timer_failed");
+    return;
+  }
   apply_pump_output();
   JsonDocument response;
   response["accepted"] = true;
@@ -331,6 +396,7 @@ void setup() {
   // LED, or sensor setup above the explicit pump-off sequence.
   pinMode(PUMP_PIN, OUTPUT);
   digitalWrite(PUMP_PIN, LOW);
+  const bool pump_safety_timer_ready = initialize_pump_safety_timer();
 
   Serial.begin(115200);
   delay(20U);
@@ -351,7 +417,9 @@ void setup() {
   controller.reset(new WateringController(
       build_controller_config(), millis(), restored_request_id.c_str()));
   network_config_valid = secret_config_valid();
-  if (!preferences_ready) {
+  if (!pump_safety_timer_ready) {
+    controller->set_error("SAFETY_TIMER_INIT_FAILED", millis());
+  } else if (!preferences_ready) {
     controller->set_error("NVS_OPEN_FAILED", millis());
   } else if (!network_config_valid) {
     controller->set_error("INVALID_SECRET_CONFIG", millis());

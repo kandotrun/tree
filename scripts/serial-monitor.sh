@@ -9,4 +9,4 @@ if ! command -v pio >/dev/null 2>&1; then
 fi
 
 cd "${repo_root}/firmware"
-exec pio device monitor --baud 115200 "$@"
+exec pio device monitor "$@"

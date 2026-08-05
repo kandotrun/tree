@@ -20,15 +20,18 @@ flowchart LR
     A -->|GPIO 26 / ADC 32| U[Unit Watering U101]
 ```
 
-The ATOM Lite owns the physical safety boundary: pump-off boot, a local maximum
-runtime, five-minute boot guard, cooldown, authenticated fixed-dose requests,
-request deduplication, and emergency stop. The bridge owns request IDs, SQLite
-history, tank estimation, scheduling decisions, and machine-readable results.
+The ATOM Lite owns the physical safety boundary: pump-off boot, an independent
+one-shot cutoff plus watchdog, five-minute boot guard, cooldown, authenticated
+fixed-dose requests, request deduplication, and emergency stop. The bridge owns
+request IDs, SQLite history, tank estimation, scheduling decisions, and
+machine-readable results.
 
 ## Safety model
 
 - GPIO 26 is configured as `OUTPUT` and driven `LOW` before Wi-Fi, NVS, LED, or
-  sensor setup.
+  sensor setup. U101's official schematic also shows a 10 kΩ gate-to-source
+  pull-down (`R1`) on its active-high N-MOSFET switch, keeping the pump off while
+  the host GPIO is high-impedance during reset.
 - A client cannot choose runtime or volume. Firmware accepts one configured
   dose only and enforces an independent absolute maximum.
 - The accepted request ID is persisted before the physical pump pin goes high.
@@ -38,6 +41,9 @@ history, tank estimation, scheduling decisions, and machine-readable results.
   outlet points into a measuring container and commissioning checks pass.
 - The bridge refuses public destinations, and the ATOM API must not be exposed
   through port forwarding or public ingress.
+- HTTP bearer authentication assumes a trusted WPA2/WPA3 LAN. Do not place the
+  ATOM on a guest or otherwise untrusted network; rotate both token copies after
+  any LAN credential compromise.
 
 Software safety controls reduce risk; they do not replace drainage, leak,
 siphon, power, weatherproofing, and physical inspection.
