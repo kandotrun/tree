@@ -1,0 +1,36 @@
+# Secrets and local configuration
+.env
+*.env
+!*.example.env
+firmware/include/config.h
+
+# Runtime state
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+bridge/.venv/
+bridge/dist/
+bridge/*.egg-info/
+
+# PlatformIO
+.pio/
+firmware/.pio/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Temporary output
+coverage.xml
+htmlcov/
