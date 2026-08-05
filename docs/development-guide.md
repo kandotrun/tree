@@ -662,13 +662,13 @@ Description=Check balcony watering schedule every morning
 
 [Timer]
 OnCalendar=*-*-* 07:30:00
-Persistent=true
 RandomizedDelaySec=120
 
 [Install]
 WantedBy=timers.target
 ```
 
+07:30の実行を逃した日は、再起動後に遅れて給水せず翌日の判定まで待つ。
 対応するserviceは`water-tree-schedule`を実行する。
 
 定期実行を有効化する前に確認する。

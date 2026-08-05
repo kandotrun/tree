@@ -95,7 +95,7 @@ def test_cli_reports_configuration_errors_as_json(
     assert "ATOM_API_TOKEN" in str(result["message_ja"])
 
 
-def test_cli_reports_database_errors_without_traceback(
+def test_cli_reports_pre_dispatch_database_errors_without_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def fail_build() -> FakeService:
@@ -109,29 +109,73 @@ def test_cli_reports_database_errors_without_traceback(
     assert return_code == 6
     assert result["result"] == "DB_ERROR"
     assert "database is read-only" not in str(result["message_ja"])
-    assert "結果を確定できません" in str(result["message_ja"])
-    assert "再実行" in str(result["message_ja"])
+    assert "操作を中止" in str(result["message_ja"])
+    assert "結果を確定できません" not in str(result["message_ja"])
 
 
-def test_cli_reports_unexpected_errors_as_safe_json(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("command", ["water", "schedule"])
+def test_cli_treats_operation_database_errors_as_unknown(
+    command: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    secret = "unexpected-sensitive-detail"
+    secret = "database-sensitive-detail"
+    service = FakeService({"ok": True, "result": "SUCCESS"})
 
-    def fail_build() -> FakeService:
-        raise RuntimeError(secret)
+    def fail_operation() -> dict[str, object]:
+        service.called.append(command)
+        raise StateError(secret)
 
-    monkeypatch.setattr(cli, "build_service", fail_build)
+    monkeypatch.setattr(service, command, fail_operation)
+    monkeypatch.setattr(cli, "build_service", lambda: service)
 
-    return_code = cli.main(["status"])
+    return_code = cli.main([command])
     result = read_output(capsys)
 
-    assert return_code == 1
-    assert result["result"] == "INTERNAL_ERROR"
+    assert return_code == 5
+    assert result["result"] == "UNKNOWN"
+    assert service.called == [command]
+    assert "給水結果を確定できません" in str(result["message_ja"])
+    assert "再実行せず" in str(result["message_ja"])
     assert secret not in str(result["message_ja"])
 
 
-def test_cli_treats_unexpected_water_error_as_unknown_physical_state(
+@pytest.mark.parametrize(
+    ("error", "expected_result", "expected_exit_code"),
+    [
+        (StateError("database-sensitive-detail"), "DB_ERROR", 6),
+        (RuntimeError("unexpected-sensitive-detail"), "INTERNAL_ERROR", 1),
+    ],
+)
+def test_cli_keeps_status_operation_errors_non_ambiguous(
+    error: Exception,
+    expected_result: str,
+    expected_exit_code: int,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    service = FakeService({"ok": True, "result": "SUCCESS"})
+
+    def fail_operation() -> dict[str, object]:
+        service.called.append("status")
+        raise error
+
+    monkeypatch.setattr(service, "status", fail_operation)
+    monkeypatch.setattr(cli, "build_service", lambda: service)
+
+    return_code = cli.main(["status"])
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+
+    assert return_code == expected_exit_code
+    assert result["result"] == expected_result
+    assert service.called == ["status"]
+    assert "未確定" not in str(result["message_ja"])
+    assert str(error) not in captured.out
+    assert str(error) not in captured.err
+
+
+def test_cli_reports_pre_dispatch_unexpected_errors_as_safe_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     secret = "unexpected-sensitive-detail"
@@ -145,8 +189,37 @@ def test_cli_treats_unexpected_water_error_as_unknown_physical_state(
     captured = capsys.readouterr()
     result = json.loads(captured.out)
 
+    assert return_code == 1
+    assert result["result"] == "INTERNAL_ERROR"
+    assert "未確定" not in str(result["message_ja"])
+    assert "RuntimeError" in captured.err
+    assert secret not in captured.out
+    assert secret not in captured.err
+
+
+@pytest.mark.parametrize("command", ["water", "schedule"])
+def test_cli_treats_unexpected_actuating_error_as_unknown_physical_state(
+    command: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "unexpected-sensitive-detail"
+    service = FakeService({"ok": True, "result": "SUCCESS"})
+
+    def fail_operation() -> dict[str, object]:
+        service.called.append(command)
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(service, command, fail_operation)
+    monkeypatch.setattr(cli, "build_service", lambda: service)
+
+    return_code = cli.main([command])
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+
     assert return_code == 5
     assert result["result"] == "UNKNOWN"
+    assert service.called == [command]
     assert "給水結果は未確定" in str(result["message_ja"])
     assert "再実行せず" in str(result["message_ja"])
     assert "現物を確認" in str(result["message_ja"])

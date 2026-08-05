@@ -108,9 +108,9 @@ direct display by Hermes.
 | 2 | Invalid/missing configuration |
 | 3 | ATOM offline |
 | 4 | Definitively rejected, or estimated tank below one dose |
-| 5 | Result unknown, including unexpected `water`/`schedule` errors; inspect hardware and DB, do not retry |
-| 6 | Local SQLite failure |
-| 1 | Unexpected internal error in a non-actuating command |
+| 5 | Result unknown after `water`/`schedule` operation dispatch, including DB/internal errors; inspect hardware and DB, do not retry |
+| 6 | Local SQLite failure before operation dispatch or in a non-actuating command |
+| 1 | Unexpected internal error before operation dispatch or in a non-actuating command |
 
 The SQLite DB defaults to `/var/lib/balcony-watering/state.db`. Back it up only
 while commands are stopped, or use SQLite's online backup facilities.

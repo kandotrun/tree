@@ -11,6 +11,7 @@ from .service import WateringService
 from .state import StateError, StateStore
 
 _COMMANDS = {"water", "status", "stop", "refill", "schedule"}
+_POTENTIALLY_ACTUATING_COMMANDS = {"water", "schedule"}
 _FIXED_COMMAND_ERROR = "".join(
     (
         "固定コマンドを1つだけ指定してください。",
@@ -28,6 +29,39 @@ _EXIT_CODES = {
 
 def _print_result(result: dict[str, Any]) -> None:
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+
+
+def _report_database_error(*, outcome_unknown: bool) -> int:
+    if outcome_unknown:
+        result = "UNKNOWN"
+        exit_code = 5
+        message = (
+            "ローカル状態DBを安全に更新できず、給水結果を確定できません。"
+            "安全のため再実行せず、現物を確認してください。"
+        )
+    else:
+        result = "DB_ERROR"
+        exit_code = 6
+        message = "ローカル状態DBを安全に更新できないため、操作を中止しました。"
+    _print_result({"ok": False, "result": result, "message_ja": message})
+    return exit_code
+
+
+def _report_unexpected_error(exc: Exception, *, outcome_unknown: bool) -> int:
+    print(f"unexpected internal error: {type(exc).__name__}", file=sys.stderr)
+    if outcome_unknown:
+        result = "UNKNOWN"
+        exit_code = 5
+        message = (
+            "予期しない内部エラーが発生し、給水結果は未確定です。"
+            "安全のため再実行せず、現物を確認してください。"
+        )
+    else:
+        result = "INTERNAL_ERROR"
+        exit_code = 1
+        message = "予期しない内部エラーのため、操作を中止しました。"
+    _print_result({"ok": False, "result": result, "message_ja": message})
+    return exit_code
 
 
 def build_service() -> WateringService:
@@ -59,7 +93,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         service = build_service()
         operation = getattr(service, command)
-        result = operation()
     except ConfigError as exc:
         _print_result(
             {
@@ -70,42 +103,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
     except StateError:
-        if command in {"water", "schedule"}:
-            database_message = (
-                "ローカル状態DBを安全に更新できず、給水結果を確定できません。"
-                "安全のため再実行せず、現物を確認してください。"
-            )
-        else:
-            database_message = "ローカル状態DBを安全に更新できないため、操作を中止しました。"
-        _print_result(
-            {
-                "ok": False,
-                "result": "DB_ERROR",
-                "message_ja": database_message,
-            }
-        )
-        return 6
+        return _report_database_error(outcome_unknown=False)
     except Exception as exc:
-        print(f"unexpected internal error: {type(exc).__name__}", file=sys.stderr)
-        if command in {"water", "schedule"}:
-            internal_result = "UNKNOWN"
-            internal_exit_code = 5
-            internal_message = (
-                "予期しない内部エラーが発生し、給水結果は未確定です。"
-                "安全のため再実行せず、現物を確認してください。"
-            )
-        else:
-            internal_result = "INTERNAL_ERROR"
-            internal_exit_code = 1
-            internal_message = "予期しない内部エラーのため、操作を中止しました。"
-        _print_result(
-            {
-                "ok": False,
-                "result": internal_result,
-                "message_ja": internal_message,
-            }
+        return _report_unexpected_error(exc, outcome_unknown=False)
+
+    try:
+        result = operation()
+    except StateError:
+        return _report_database_error(outcome_unknown=command in _POTENTIALLY_ACTUATING_COMMANDS)
+    except Exception as exc:
+        return _report_unexpected_error(
+            exc,
+            outcome_unknown=command in _POTENTIALLY_ACTUATING_COMMANDS,
         )
-        return internal_exit_code
 
     _print_result(result)
     return _EXIT_CODES.get(str(result.get("result")), 0)
