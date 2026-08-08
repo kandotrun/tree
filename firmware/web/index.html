@@ -112,6 +112,19 @@
     .preset.active { color: #0f352e; border-color: var(--water-pale); background: var(--water-pale); font-weight: 800; }
     .action-button { width: 100%; min-height: 56px; border: 0; border-radius: 17px; color: #0d352d; background: var(--water-pale); font-weight: 850; letter-spacing: .02em; cursor: pointer; box-shadow: 0 10px 30px rgba(0,0,0,.15); }
     .action-button:disabled { opacity: .38; cursor: not-allowed; box-shadow: none; }
+    .hold-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.14); }
+    .hold-heading { margin: 0 0 9px; color: rgba(248,244,233,.72); font-size: 11px; font-weight: 750; letter-spacing: .05em; }
+    .hold-button {
+      width: 100%; min-height: 72px; padding: 12px 16px; border: 1px solid rgba(188,229,223,.62); border-radius: 18px;
+      color: #e8fffb; background: rgba(25,169,160,.18); font-weight: 850; cursor: pointer;
+      touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    }
+    .hold-button span, .hold-button small { display: block; pointer-events: none; }
+    .hold-button small { margin-top: 4px; color: rgba(232,255,251,.68); font-size: 10px; font-weight: 650; }
+    .hold-button.holding { color: #123d34; background: var(--water-pale); box-shadow: 0 0 0 4px rgba(188,229,223,.16); }
+    .hold-button.holding small { color: rgba(18,61,52,.7); }
+    .hold-button:disabled { opacity: .38; cursor: not-allowed; box-shadow: none; }
+    .hold-help { margin: 8px 1px 0; color: rgba(248,244,233,.58); font-size: 10px; line-height: 1.55; }
     .stop-button { width: 100%; min-height: 48px; margin-top: 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 15px; color: #ffd9cf; background: rgba(183,68,53,.18); font-weight: 800; cursor: pointer; }
     .stop-button:disabled { opacity: .62; color: rgba(255,217,207,.82); cursor: not-allowed; }
     .safety-copy { margin: 15px 0 0; color: rgba(248,244,233,.58); font-size: 10px; line-height: 1.6; }
@@ -254,6 +267,11 @@
               <button class="preset active" type="button" data-sec="10">10秒</button><button class="preset" type="button" data-sec="30">30秒</button><button class="preset" type="button" data-sec="60">1分</button><button class="preset" type="button" data-sec="120">2分</button><button class="preset" type="button" data-sec="180">3分</button>
             </div>
             <button class="action-button" id="water-button" type="button" disabled>この時間で水やり</button>
+            <div class="hold-section">
+              <p class="hold-heading">長く水やりする場合</p>
+              <button class="hold-button" id="hold-button" type="button" aria-pressed="false" aria-describedby="hold-help" disabled><span id="hold-button-label">押している間だけ水やり</span><small>指を離すと停止</small></button>
+              <p class="hold-help" id="hold-help">500msごとにATOMへ生存確認します。通信が1.5秒途切れると物理停止し、押しっぱなしでも最長10分で停止します。</p>
+            </div>
             <button class="stop-button" id="stop-button" type="button" disabled>ポンプを緊急停止</button>
             <p class="safety-copy">給水開始前に吐出口・タンク・排水を目視確認してください。通信結果が不明な場合、同じ要求を自動再試行しません。</p>
           </div>
@@ -276,9 +294,18 @@
     "use strict";
     const TOKEN_KEY = "watering-api-token-v1";
     const CALIBRATION_KEY = "watering-moisture-calibration-v1";
+    const HOLD_HEARTBEAT_MS = 500;
+    const HOLD_LEASE_MS = 1500;
+    const HOLD_MAX_RUN_MS = 600000;
     const state = { token: sessionStorage.getItem(TOKEN_KEY) || "", status: null, adc: null, history: [], maxDurationSec: 180 };
+    const hold = {
+      pressed: false, active: false, startInFlight: false,
+      keepaliveInFlight: false, requestId: "", heartbeatTimer: 0,
+      pointerId: null, stopPromise: null
+    };
     let calibration = loadCalibration();
     let toastTimer = 0;
+    let statusRequestSequence = 0;
 
     const $ = (id) => document.getElementById(id);
     const authGate = $("auth-gate");
@@ -286,6 +313,7 @@
     const waterDialog = $("water-dialog");
     const durationSlider = $("duration-sec");
     const durationNumber = $("duration-number");
+    const holdButton = $("hold-button");
 
     function loadCalibration() {
       try {
@@ -320,9 +348,11 @@
 
     async function refreshStatus() {
       if (!state.token) return;
+      const requestSequence = ++statusRequestSequence;
       try {
         const response = await fetch("/v1/status", { headers: requestHeaders(), cache: "no-store" });
         const payload = await parseResponse(response);
+        if (requestSequence !== statusRequestSequence) return;
         state.status = payload;
         if (Number.isInteger(payload.moisture_adc)) {
           state.adc = payload.moisture_adc;
@@ -341,6 +371,7 @@
         setConnection("online", "接続中");
         render();
       } catch (error) {
+        if (requestSequence !== statusRequestSequence) return;
         if (error.status === 401) {
           state.token = "";
           sessionStorage.removeItem(TOKEN_KEY);
@@ -404,6 +435,15 @@
       $("chart-range").textContent = `${low} — ${high} ADC`;
     }
 
+    function renderHoldButton() {
+      const engaged = hold.pressed || hold.startInFlight || hold.active;
+      holdButton.classList.toggle("holding", engaged);
+      holdButton.setAttribute("aria-pressed", engaged ? "true" : "false");
+      $("hold-button-label").textContent = hold.active
+        ? "給水中 — 指を離すと停止"
+        : hold.startInFlight ? "開始を確認中…" : "押している間だけ水やり";
+    }
+
     function renderDevice() {
       const status = state.status;
       if (!status) return;
@@ -418,12 +458,28 @@
         $("last-event-title").textContent = status.last_stop_reason === "DOSE_COMPLETE" ? "前回の給水は正常完了" : status.pump ? "給水を実行中" : "前回の実行記録";
         $("last-event-detail").textContent = `${status.last_request_id} / ${formatMs(status.last_runtime_ms)} / ${status.last_stop_reason || "実行中"}`;
       }
+      if ((hold.active || hold.startInFlight) &&
+          status.last_request_id === hold.requestId &&
+          status.pump !== true) {
+        hold.pressed = false;
+        hold.startInFlight = false;
+        hold.keepaliveInFlight = false;
+        void releaseHold("device-reported-stopped", true, true);
+      }
       const canWater = status.state === "IDLE" && status.pump === false && status.armed === true;
+      const holdEngaged = hold.pressed || hold.startInFlight || hold.active;
       $("water-button").disabled = !canWater;
-      $("stop-button").disabled = status.pump !== true;
+      holdButton.disabled = !(canWater || holdEngaged);
+      $("stop-button").disabled = status.pump !== true && !holdEngaged;
+      renderHoldButton();
     }
 
-    function disableActions() { $("water-button").disabled = true; $("stop-button").disabled = !state.token; }
+    function disableActions() {
+      $("water-button").disabled = true;
+      $("stop-button").disabled = !state.token;
+      holdButton.disabled = !(hold.pressed || hold.startInFlight || hold.active);
+      renderHoldButton();
+    }
     function formatMs(value) { if (!Number.isInteger(value)) return "—"; if (value < 1000) return `${value} ms`; const sec = Math.ceil(value / 1000); return sec >= 60 ? `${Math.floor(sec / 60)}分${sec % 60}秒` : `${sec}秒`; }
     function formatUptime(value) { if (!Number.isInteger(value)) return "—"; const min = Math.floor(value / 60000); return min >= 60 ? `${Math.floor(min / 60)}時間${min % 60}分` : `${min}分`; }
 
@@ -483,15 +539,143 @@
       } finally { $("confirm-water").disabled = false; }
     }
 
-    async function stopWatering() {
-      $("stop-button").disabled = true;
+    async function stopWatering({ silent = false, keepalive = false, refresh = true } = {}) {
+      if (!silent) $("stop-button").disabled = true;
+      let confirmed = false;
       try {
-        const response = await fetch("/v1/stop", { method: "POST", headers: requestHeaders(true), cache: "no-store", body: "{}" });
+        const response = await fetch("/v1/stop", {
+          method: "POST", headers: requestHeaders(true), cache: "no-store",
+          body: "{}", keepalive
+        });
         const payload = await parseResponse(response);
         if (payload.stopped !== true) throw new Error("invalid_stop_acknowledgement");
-        showToast("停止命令を確認しました。ポンプOFFを状態欄でも確認してください。");
-      } catch (_) { showToast("停止を確認できません。現物のポンプを確認してください。", true); }
-      await refreshStatus();
+        confirmed = true;
+        if (!silent) showToast("停止命令を確認しました。ポンプOFFを状態欄でも確認してください。");
+      } catch (_) {
+        if (!silent) showToast("停止を確認できません。現物のポンプを確認してください。", true);
+      }
+      if (refresh) await refreshStatus();
+      return confirmed;
+    }
+
+    function clearHoldHeartbeat() {
+      clearTimeout(hold.heartbeatTimer);
+      hold.heartbeatTimer = 0;
+    }
+
+    function scheduleHoldHeartbeat() {
+      clearHoldHeartbeat();
+      if (hold.pressed && hold.active && !hold.keepaliveInFlight) {
+        hold.heartbeatTimer = setTimeout(sendHoldHeartbeat, HOLD_HEARTBEAT_MS);
+      }
+    }
+
+    async function releaseHold(reason = "release", keepalive = true, force = false) {
+      const wasEngaged = hold.pressed || hold.startInFlight || hold.active || Boolean(hold.requestId);
+      hold.pressed = false;
+      hold.active = false;
+      hold.pointerId = null;
+      clearHoldHeartbeat();
+      renderHoldButton();
+      if (!wasEngaged && !force) return;
+
+      if (hold.stopPromise) {
+        await hold.stopPromise;
+        if (!force) return;
+      }
+      const stopPromise = stopWatering({ silent: true, keepalive, refresh: !keepalive });
+      hold.stopPromise = stopPromise;
+      await stopPromise;
+      if (hold.stopPromise === stopPromise) hold.stopPromise = null;
+      if (!hold.startInFlight) hold.requestId = "";
+      renderHoldButton();
+      void reason;
+    }
+
+    async function beginHold(event) {
+      if (event.type === "pointerdown" && event.pointerType === "mouse" && event.button !== 0) return;
+      if (!state.token || holdButton.disabled || hold.pressed || hold.startInFlight || hold.active) return;
+      event.preventDefault();
+      if (event.type === "pointerdown") {
+        hold.pointerId = event.pointerId;
+        try { holdButton.setPointerCapture(event.pointerId); } catch (_) {}
+      }
+
+      hold.pressed = true;
+      hold.startInFlight = true;
+      hold.requestId = createRequestId();
+      const requestId = hold.requestId;
+      renderHoldButton();
+      try {
+        const response = await fetch("/v1/hold/start", {
+          method: "POST", headers: requestHeaders(true), cache: "no-store",
+          body: JSON.stringify({ request_id: requestId })
+        });
+        const payload = await parseResponse(response);
+        if (payload.accepted !== true || payload.request_id !== requestId ||
+            payload.watering_mode !== "HOLD" || payload.lease_ms !== HOLD_LEASE_MS ||
+            payload.max_run_ms !== HOLD_MAX_RUN_MS) {
+          throw ambiguousAcceptance();
+        }
+        hold.startInFlight = false;
+        if (!hold.pressed) await releaseHold("released-before-start", true, true);
+        else {
+          hold.active = true;
+          renderHoldButton();
+          scheduleHoldHeartbeat();
+          showToast("押している間の給水を開始しました。指を離すと停止します。");
+          await refreshStatus();
+        }
+      } catch (error) {
+        hold.startInFlight = false;
+        hold.pressed = false;
+        hold.active = false;
+        clearHoldHeartbeat();
+        const ambiguous = error instanceof TypeError || error.ambiguous;
+        if (ambiguous) await releaseHold("ambiguous-start", true, true);
+        else {
+          hold.requestId = "";
+          renderHoldButton();
+        }
+        showToast(ambiguous
+          ? "押下給水の開始結果が不明です。停止命令を送り、ATOMの1.5秒タイマーでも停止します。"
+          : `押下給水を開始できませんでした: ${error.code || error.message}`, true);
+        await refreshStatus();
+      }
+    }
+
+    async function sendHoldHeartbeat() {
+      if (!hold.pressed || !hold.active || hold.keepaliveInFlight) return;
+      hold.keepaliveInFlight = true;
+      let failure = null;
+      try {
+        const response = await fetch("/v1/hold/keepalive", {
+          method: "POST", headers: requestHeaders(true), cache: "no-store",
+          body: JSON.stringify({ request_id: hold.requestId })
+        });
+        const payload = await parseResponse(response);
+        if (payload.renewed !== true || payload.request_id !== hold.requestId ||
+            payload.lease_ms !== HOLD_LEASE_MS) {
+          throw ambiguousAcceptance();
+        }
+      } catch (error) {
+        failure = error;
+      } finally {
+        hold.keepaliveInFlight = false;
+      }
+
+      if (failure) {
+        await releaseHold("keepalive-failed", true, true);
+        showToast("生存確認に失敗したため停止しました。ATOM側でも1.5秒以内に物理停止します。", true);
+        await refreshStatus();
+        return;
+      }
+      scheduleHoldHeartbeat();
+    }
+
+    function releasePointerHold(event) {
+      if (hold.pointerId !== null && event.pointerId !== hold.pointerId) return;
+      void releaseHold(event.type, true);
     }
 
     tokenForm.addEventListener("submit", async (event) => {
@@ -507,7 +691,30 @@
     $("water-button").addEventListener("click", () => { const duration = setDuration(durationSlider.value); $("dialog-duration").textContent = duration >= 60 ? `${Math.floor(duration / 60)}分${duration % 60 ? `${duration % 60}秒` : ""}` : `${duration}秒`; waterDialog.showModal(); });
     $("cancel-water").addEventListener("click", () => waterDialog.close());
     $("confirm-water").addEventListener("click", startWatering);
-    $("stop-button").addEventListener("click", stopWatering);
+    holdButton.addEventListener("pointerdown", beginHold);
+    holdButton.addEventListener("pointerup", releasePointerHold);
+    holdButton.addEventListener("pointercancel", releasePointerHold);
+    holdButton.addEventListener("lostpointercapture", releasePointerHold);
+    holdButton.addEventListener("contextmenu", (event) => event.preventDefault());
+    holdButton.addEventListener("keydown", (event) => {
+      if ((event.key === " " || event.key === "Enter") && !event.repeat) void beginHold(event);
+    });
+    holdButton.addEventListener("keyup", (event) => {
+      if (event.key === " " || event.key === "Enter") {
+        event.preventDefault();
+        void releaseHold("keyup", true);
+      }
+    });
+    $("stop-button").addEventListener("click", () => {
+      const holdEngaged = hold.pressed || hold.startInFlight || hold.active || Boolean(hold.requestId);
+      if (holdEngaged) void releaseHold("emergency-button", false, true);
+      else void stopWatering();
+    });
+    window.addEventListener("blur", () => { void releaseHold("blur", true); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") void releaseHold("hidden", true);
+    });
+    window.addEventListener("pagehide", () => { void releaseHold("pagehide", true); });
     $("calibrate-dry").addEventListener("click", () => { if (state.adc === null) return showToast("センサー値を取得できていません。", true); calibration.dryAdc = state.adc; saveCalibration(); showToast("現在値を乾燥点として保存しました。"); });
     $("calibrate-wet").addEventListener("click", () => { if (state.adc === null) return showToast("センサー値を取得できていません。", true); calibration.wetAdc = state.adc; saveCalibration(); showToast("現在値を湿潤点として保存しました。"); });
     $("reset-calibration").addEventListener("click", () => { calibration = { dryAdc: null, wetAdc: null }; localStorage.removeItem(CALIBRATION_KEY); renderMoisture(); showToast("校正値をリセットしました。"); });

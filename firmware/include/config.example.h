@@ -6,7 +6,7 @@
 #define API_TOKEN "CHANGE_ME_TO_AT_LEAST_32_RANDOM_ASCII_CHARACTERS"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.2.0"
+#define FIRMWARE_VERSION "0.3.0"
 
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
@@ -18,6 +18,8 @@
 
 // Default dose when duration_sec is omitted. Every request remains bounded by
 // MAX_RUN_MS and the firmware's absolute 180-second ceiling.
+// The separate press-and-hold mode uses firmware-fixed 1.5-second leases and a
+// 10-minute absolute session cap; neither value is caller controlled.
 #define DOSE_MS 10000UL
 #define MAX_RUN_MS 180000UL
 // Zero means a distinct request can start immediately after completion or stop.

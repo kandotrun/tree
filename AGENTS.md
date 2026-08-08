@@ -8,11 +8,17 @@ that the pump turns off locally even if Wi-Fi, the bridge, or Hermes fails.
 ## Safety invariants
 
 - Set GPIO 26 to `OUTPUT` and `LOW` before Wi-Fi or any other peripheral setup.
-- Never accept a client-supplied volume. An interactive request may include only
-  an integer `duration_sec` bounded to 1-180 seconds and `MAX_RUN_MS`; keep the
-  independent local cutoff authoritative. Bridge/Hermes commands stay fixed and
-  do not expose a runtime argument.
+- Never accept a client-supplied volume. A one-shot interactive request may
+  include only an integer `duration_sec` bounded to 1-180 seconds and
+  `MAX_RUN_MS`. Bridge/Hermes commands stay fixed and do not expose runtime.
+- Longer manual watering is allowed only through the fixed firmware hold mode:
+  a 1,500 ms device-local lease, 500 ms browser heartbeat, matching active
+  `request_id`, and a 600,000 ms absolute session cap. A keepalive must never
+  start or restart a pump, and timer renewal must never re-arm a fired safety
+  gate.
 - Never retry `POST /v1/water` automatically after an ambiguous network result.
+- On ambiguous hold start or failed keepalive, send best-effort stop without
+  retrying start; loss of heartbeats must still stop the pump locally.
 - Persist the accepted request ID before physically enabling the pump.
 - Keep the API LAN-only. Never add port forwarding, public ingress, or secrets.
 - Keep automatic scheduling disabled until calibration, 72-hour power testing,

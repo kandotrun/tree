@@ -20,6 +20,7 @@ struct RequestedDuration {
 };
 
 HttpDecision http_decision(StartResult result);
+HttpDecision http_decision(HoldRenewResult result);
 RequestedDuration resolve_requested_duration(bool provided, bool is_integer,
                                              uint64_t duration_sec,
                                              uint32_t default_duration_ms,
