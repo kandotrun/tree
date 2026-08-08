@@ -111,16 +111,16 @@ def test_safety_controls_have_explicit_cross_browser_visual_states() -> None:
     assert "#duration-sec::-webkit-slider-thumb" in source
     assert "#duration-sec::-moz-range-thumb" in source
     assert ".stop-button:disabled { opacity: .62" in source
+    assert ".hold-button:focus-visible" in source
+    assert "outline-offset:" in source
 
 
 def test_emergency_stop_stays_available_when_status_refresh_fails() -> None:
     source = dashboard_source()
-    expected = (
-        'function disableActions() { $("water-button").disabled = true; '
-        '$("stop-button").disabled = !state.token; }'
-    )
 
-    assert expected in source
+    assert '$("water-button").disabled = true' in source
+    assert '$("stop-button").disabled = !state.token' in source
+    assert "holdButton.disabled = !(hold.pressed || hold.startInFlight || hold.active)" in source
 
 
 def test_emergency_stop_requires_an_explicit_stop_acknowledgement() -> None:
@@ -128,6 +128,63 @@ def test_emergency_stop_requires_an_explicit_stop_acknowledgement() -> None:
 
     assert "payload.stopped !== true" in source
     assert "invalid_stop_acknowledgement" in source
+
+
+def test_dashboard_has_a_bounded_deadman_hold_control() -> None:
+    source = dashboard_source()
+
+    assert 'id="hold-button"' in source
+    assert 'aria-pressed="false"' in source
+    assert "touch-action: none" in source
+    assert "const HOLD_HEARTBEAT_MS = 500;" in source
+    assert "const HOLD_LEASE_MS = 1500;" in source
+    assert "const HOLD_MAX_RUN_MS = 600000;" in source
+    assert 'fetch("/v1/hold/start"' in source
+    assert 'fetch("/v1/hold/keepalive"' in source
+    assert 'payload.watering_mode !== "HOLD"' in source
+    assert "payload.lease_ms !== HOLD_LEASE_MS" in source
+    assert "payload.max_run_ms !== HOLD_MAX_RUN_MS" in source
+    assert "payload.renewed !== true" in source
+    assert "payload.request_id !== hold.requestId" in source
+
+
+def test_hold_release_paths_stop_and_never_overlap_heartbeats() -> None:
+    source = dashboard_source()
+
+    assert "hold.keepaliveInFlight" in source
+    assert "setTimeout(sendHoldHeartbeat, HOLD_HEARTBEAT_MS)" in source
+    assert 'holdButton.addEventListener("pointerup"' in source
+    assert 'holdButton.addEventListener("pointercancel"' in source
+    assert 'holdButton.addEventListener("lostpointercapture"' in source
+    assert 'holdButton.addEventListener("blur"' in source
+    assert 'window.addEventListener("blur"' in source
+    assert 'document.addEventListener("visibilitychange"' in source
+    assert 'window.addEventListener("pagehide"' in source
+    assert "if (!hold.pressed) await releaseHold" in source
+    assert 'body: "{}", keepalive' in source
+    assert 'releaseHold("pagehide", true)' in source
+    assert "stopWatering({ silent, keepalive" in source
+    assert 'releaseHold("emergency-button", false, true, false)' in source
+
+
+def test_hold_control_preserves_the_one_shot_180_second_limit() -> None:
+    source = dashboard_source()
+
+    assert 'id="duration-sec" type="range" min="1" max="180"' in source
+    assert "Math.min(180, payload.max_duration_sec)" in source
+    assert "最大180秒" in source
+    assert "最長10分" in source
+
+
+def test_stale_status_response_cannot_cancel_an_active_hold() -> None:
+    source = dashboard_source()
+
+    assert "if (hold.active && status.pump !== true)" not in source
+    assert "status.last_request_id === hold.requestId &&" in source
+    assert 'releaseHold("device-reported-stopped", true, true)' in source
+    assert '$("stop-button").disabled = status.pump !== true && !holdEngaged' in source
+    assert "const requestSequence = ++statusRequestSequence;" in source
+    assert "if (requestSequence !== statusRequestSequence) return;" in source
 
 
 def test_embedded_dashboard_header_is_deterministic_and_current() -> None:

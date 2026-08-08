@@ -39,6 +39,22 @@ HttpDecision http_decision(StartResult result) {
   return {423, "error"};
 }
 
+HttpDecision http_decision(HoldRenewResult result) {
+  switch (result) {
+    case HoldRenewResult::Renewed:
+      return {200, "renewed"};
+    case HoldRenewResult::InvalidRequest:
+      return {400, "invalid_request_id"};
+    case HoldRenewResult::NotActive:
+      return {409, "hold_not_active"};
+    case HoldRenewResult::SessionMismatch:
+      return {409, "hold_session_mismatch"};
+    case HoldRenewResult::Expired:
+      return {409, "hold_expired"};
+  }
+  return {409, "hold_not_active"};
+}
+
 RequestedDuration resolve_requested_duration(bool provided, bool is_integer,
                                              uint64_t duration_sec,
                                              uint32_t default_duration_ms,

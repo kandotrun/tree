@@ -9,6 +9,7 @@
 #include "sensor_filter.h"
 
 using watering::HttpDecision;
+using watering::HoldRenewResult;
 using watering::PumpSafetyGate;
 using watering::RequestedDuration;
 using watering::StartResult;
@@ -55,6 +56,28 @@ void test_start_results_have_stable_http_mapping() {
   decision = http_decision(StartResult::Cooldown);
   TEST_ASSERT_EQUAL_INT(429, decision.status);
   TEST_ASSERT_EQUAL_STRING("cooldown", decision.code);
+}
+
+void test_hold_renew_results_have_stable_http_mapping() {
+  HttpDecision decision = http_decision(HoldRenewResult::Renewed);
+  TEST_ASSERT_EQUAL_INT(200, decision.status);
+  TEST_ASSERT_EQUAL_STRING("renewed", decision.code);
+
+  decision = http_decision(HoldRenewResult::InvalidRequest);
+  TEST_ASSERT_EQUAL_INT(400, decision.status);
+  TEST_ASSERT_EQUAL_STRING("invalid_request_id", decision.code);
+
+  decision = http_decision(HoldRenewResult::NotActive);
+  TEST_ASSERT_EQUAL_INT(409, decision.status);
+  TEST_ASSERT_EQUAL_STRING("hold_not_active", decision.code);
+
+  decision = http_decision(HoldRenewResult::SessionMismatch);
+  TEST_ASSERT_EQUAL_INT(409, decision.status);
+  TEST_ASSERT_EQUAL_STRING("hold_session_mismatch", decision.code);
+
+  decision = http_decision(HoldRenewResult::Expired);
+  TEST_ASSERT_EQUAL_INT(409, decision.status);
+  TEST_ASSERT_EQUAL_STRING("hold_expired", decision.code);
 }
 
 void test_constant_time_token_comparison_handles_mismatch_and_bounds() {
@@ -154,6 +177,7 @@ void test_safety_cutoff_cannot_be_overridden_by_stale_controller_state() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_start_results_have_stable_http_mapping);
+  RUN_TEST(test_hold_renew_results_have_stable_http_mapping);
   RUN_TEST(test_constant_time_token_comparison_handles_mismatch_and_bounds);
   RUN_TEST(test_request_duration_defaults_and_validates_before_pump_control);
   RUN_TEST(test_json_duration_accepts_only_bounded_unsigned_integers);

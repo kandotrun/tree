@@ -7,8 +7,10 @@
 #include "watering_controller.h"
 
 using watering::ControllerConfig;
+using watering::HoldRenewResult;
 using watering::StartResult;
 using watering::State;
+using watering::WateringMode;
 using watering::WateringController;
 
 namespace {
@@ -311,6 +313,134 @@ void test_invalid_safety_configuration_starts_in_error() {
   TEST_ASSERT_EQUAL_STRING("INVALID_CONFIG", controller.error_reason());
 }
 
+void test_hold_session_stops_when_local_lease_expires() {
+  ControllerConfig config = safe_config();
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  const uint32_t started_at = 300001U;
+
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(StartResult::Accepted),
+      static_cast<int>(controller.start_hold("hold-lease", started_at)));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(WateringMode::Hold),
+                        static_cast<int>(controller.watering_mode()));
+  TEST_ASSERT_EQUAL_UINT32(watering::kHoldMaxRunMs,
+                           controller.scheduled_ms());
+
+  controller.tick(started_at + watering::kHoldLeaseMs - 1U);
+  TEST_ASSERT_TRUE(controller.pump_on());
+  controller.tick(started_at + watering::kHoldLeaseMs);
+
+  TEST_ASSERT_FALSE(controller.pump_on());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(WateringMode::None),
+                        static_cast<int>(controller.watering_mode()));
+  TEST_ASSERT_EQUAL_UINT32(watering::kHoldMaxRunMs,
+                           controller.scheduled_ms());
+  TEST_ASSERT_EQUAL_STRING("HOLD_LEASE_EXPIRED",
+                           controller.last_stop_reason());
+  TEST_ASSERT_EQUAL_UINT32(watering::kHoldLeaseMs,
+                           controller.last_runtime_ms());
+}
+
+void test_hold_keepalives_continue_past_the_one_shot_limit() {
+  ControllerConfig config = safe_config();
+  config.max_run_ms = watering::kAbsoluteMaxRunMs;
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  const uint32_t started_at = 300001U;
+  controller.start_hold("hold-long", started_at);
+
+  for (uint32_t second = 1U; second <= 181U; ++second) {
+    const uint32_t now = started_at + second * 1000U;
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(HoldRenewResult::Renewed),
+        static_cast<int>(controller.renew_hold("hold-long", now)));
+    controller.tick(now);
+  }
+
+  TEST_ASSERT_TRUE(controller.pump_on());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(WateringMode::Hold),
+                        static_cast<int>(controller.watering_mode()));
+}
+
+void test_hold_session_stops_at_absolute_ten_minute_limit() {
+  ControllerConfig config = safe_config();
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  const uint32_t started_at = 300001U;
+  controller.start_hold("hold-absolute", started_at);
+
+  for (uint32_t second = 1U;
+       second < watering::kHoldMaxRunMs / 1000U; ++second) {
+    const uint32_t now = started_at + second * 1000U;
+    TEST_ASSERT_EQUAL_INT(
+        static_cast<int>(HoldRenewResult::Renewed),
+        static_cast<int>(controller.renew_hold("hold-absolute", now)));
+  }
+  controller.tick(started_at + watering::kHoldMaxRunMs);
+
+  TEST_ASSERT_FALSE(controller.pump_on());
+  TEST_ASSERT_EQUAL_STRING("HOLD_MAX_RUN", controller.last_stop_reason());
+  TEST_ASSERT_EQUAL_UINT32(watering::kHoldMaxRunMs,
+                           controller.last_runtime_ms());
+}
+
+void test_hold_renewal_rejects_a_different_session_without_stopping_active_one() {
+  ControllerConfig config = safe_config();
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  const uint32_t started_at = 300001U;
+  controller.start_hold("hold-owner", started_at);
+
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(HoldRenewResult::SessionMismatch),
+      static_cast<int>(
+          controller.renew_hold("hold-different", started_at + 500U)));
+  TEST_ASSERT_TRUE(controller.pump_on());
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(HoldRenewResult::Renewed),
+      static_cast<int>(controller.renew_hold("hold-owner", started_at + 600U)));
+}
+
+void test_hold_renewal_at_expiry_fails_closed() {
+  ControllerConfig config = safe_config();
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  const uint32_t started_at = 300001U;
+  controller.start_hold("hold-expired", started_at);
+
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(HoldRenewResult::Expired),
+      static_cast<int>(controller.renew_hold(
+          "hold-expired", started_at + watering::kHoldLeaseMs)));
+  TEST_ASSERT_FALSE(controller.pump_on());
+  TEST_ASSERT_EQUAL_STRING("HOLD_LEASE_EXPIRED",
+                           controller.last_stop_reason());
+}
+
+void test_manual_stop_ends_hold_and_blocks_late_keepalive() {
+  ControllerConfig config = safe_config();
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  const uint32_t started_at = 300001U;
+  controller.start_hold("hold-stop", started_at);
+
+  controller.stop(started_at + 700U);
+
+  TEST_ASSERT_FALSE(controller.pump_on());
+  TEST_ASSERT_EQUAL_STRING("MANUAL_STOP", controller.last_stop_reason());
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(HoldRenewResult::NotActive),
+      static_cast<int>(
+          controller.renew_hold("hold-stop", started_at + 800U)));
+}
+
 }  // namespace
 
 int main(int, char**) {
@@ -336,5 +466,12 @@ int main(int, char**) {
   RUN_TEST(test_millis_rollover_preserves_timers);
   RUN_TEST(test_error_transition_always_turns_pump_off);
   RUN_TEST(test_invalid_safety_configuration_starts_in_error);
+  RUN_TEST(test_hold_session_stops_when_local_lease_expires);
+  RUN_TEST(test_hold_keepalives_continue_past_the_one_shot_limit);
+  RUN_TEST(test_hold_session_stops_at_absolute_ten_minute_limit);
+  RUN_TEST(
+      test_hold_renewal_rejects_a_different_session_without_stopping_active_one);
+  RUN_TEST(test_hold_renewal_at_expiry_fails_closed);
+  RUN_TEST(test_manual_stop_ends_hold_and_blocks_late_keepalive);
   return UNITY_END();
 }

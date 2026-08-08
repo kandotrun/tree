@@ -8,6 +8,8 @@
 namespace watering {
 
 constexpr uint32_t kAbsoluteMaxRunMs = 180000U;
+constexpr uint32_t kHoldLeaseMs = 1500U;
+constexpr uint32_t kHoldMaxRunMs = 600000U;
 constexpr std::size_t kRecentRequestCount = 8U;
 
 enum class State {
@@ -30,6 +32,20 @@ enum class StartResult {
   NotArmed,
 };
 
+enum class HoldRenewResult {
+  Renewed,
+  InvalidRequest,
+  NotActive,
+  SessionMismatch,
+  Expired,
+};
+
+enum class WateringMode {
+  None,
+  Dose,
+  Hold,
+};
+
 struct ControllerConfig {
   uint32_t dose_ms;
   uint32_t max_run_ms;
@@ -39,6 +55,7 @@ struct ControllerConfig {
 };
 
 const char* state_name(State state);
+const char* watering_mode_name(WateringMode mode);
 
 class WateringController {
  public:
@@ -50,6 +67,8 @@ class WateringController {
   StartResult start(const char* request_id, uint32_t now);
   StartResult start(const char* request_id, uint32_t now,
                     uint32_t requested_duration_ms);
+  StartResult start_hold(const char* request_id, uint32_t now);
+  HoldRenewResult renew_hold(const char* request_id, uint32_t now);
   void stop(uint32_t now);
   void set_error(const char* reason, uint32_t now);
 
@@ -57,7 +76,9 @@ class WateringController {
   bool pump_on() const { return state_ == State::Watering; }
   uint32_t remaining_ms(uint32_t now) const;
   uint32_t scheduled_ms() const;
+  uint32_t hold_lease_remaining_ms(uint32_t now) const;
   uint32_t last_runtime_ms() const { return last_runtime_ms_; }
+  WateringMode watering_mode() const { return watering_mode_; }
   const std::string& last_request_id() const { return last_request_id_; }
   const char* last_stop_reason() const { return last_stop_reason_.c_str(); }
   const char* error_reason() const { return error_reason_.c_str(); }
@@ -69,7 +90,8 @@ class WateringController {
   bool valid_config() const;
   StartResult start_with_duration(const char* request_id, uint32_t now,
                                   uint32_t requested_duration_ms,
-                                  bool allow_safety_clamp);
+                                  bool allow_safety_clamp,
+                                  WateringMode mode);
   bool is_duplicate(const char* request_id) const;
   void remember_request(const char* request_id);
   void finish_watering(uint32_t now, const char* reason);
@@ -78,8 +100,11 @@ class WateringController {
   State state_;
   uint32_t state_started_at_;
   uint32_t watering_started_at_;
+  uint32_t hold_last_renewed_at_;
   uint32_t active_duration_ms_;
   uint32_t last_runtime_ms_;
+  WateringMode watering_mode_;
+  WateringMode last_watering_mode_;
   std::string last_request_id_;
   std::string last_stop_reason_;
   std::string error_reason_;

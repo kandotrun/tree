@@ -23,6 +23,7 @@
 namespace {
 
 using watering::ControllerConfig;
+using watering::HoldRenewResult;
 using watering::HttpDecision;
 using watering::PumpSafetyGate;
 using watering::RequestedDuration;
@@ -167,6 +168,43 @@ bool arm_pump_safety_timer(uint32_t cutoff_ms) {
   return true;
 }
 
+bool renew_pump_safety_timer(uint32_t cutoff_ms) {
+  const uint32_t maximum_cutoff_ms =
+      min(static_cast<uint32_t>(MAX_RUN_MS), watering::kAbsoluteMaxRunMs);
+  if (pump_safety_timer == nullptr || cutoff_ms == 0U ||
+      cutoff_ms > maximum_cutoff_ms ||
+      !pump_safety_timer_active.load() ||
+      !pump_safety_gate.allows_output(true)) {
+    return false;
+  }
+
+  if (esp_timer_stop(pump_safety_timer) != ESP_OK) {
+    pump_safety_timer_active.store(false);
+    pump_safety_gate.cutoff();
+    gpio_set_level(static_cast<gpio_num_t>(PUMP_PIN), 0U);
+    return false;
+  }
+  pump_safety_timer_active.store(false);
+  if (!pump_safety_gate.allows_output(true)) {
+    pump_safety_gate.cutoff();
+    gpio_set_level(static_cast<gpio_num_t>(PUMP_PIN), 0U);
+    return false;
+  }
+
+  const uint64_t cutoff_runtime_us =
+      static_cast<uint64_t>(cutoff_ms) * 1000ULL;
+  pump_safety_timer_active.store(true);
+  if (esp_timer_start_once(pump_safety_timer, cutoff_runtime_us) != ESP_OK ||
+      !pump_safety_gate.allows_output(true)) {
+    pump_safety_timer_active.store(false);
+    (void)esp_timer_stop(pump_safety_timer);
+    pump_safety_gate.cutoff();
+    gpio_set_level(static_cast<gpio_num_t>(PUMP_PIN), 0U);
+    return false;
+  }
+  return true;
+}
+
 bool pump_output_should_run() {
   return controller != nullptr &&
          pump_safety_gate.allows_output(controller->pump_on());
@@ -266,6 +304,12 @@ void handle_status() {
       min(static_cast<uint32_t>(MAX_RUN_MS), watering::kAbsoluteMaxRunMs) /
       1000U;
   response["scheduled_ms"] = controller->scheduled_ms();
+  response["watering_mode"] =
+      watering::watering_mode_name(controller->watering_mode());
+  response["hold_lease_ms"] = watering::kHoldLeaseMs;
+  response["hold_max_run_ms"] = watering::kHoldMaxRunMs;
+  response["hold_lease_remaining_ms"] =
+      controller->hold_lease_remaining_ms(now);
   response["last_request_id"] = controller->last_request_id();
   response["remaining_ms"] = controller->remaining_ms(now);
   response["last_runtime_ms"] = controller->last_runtime_ms();
@@ -344,6 +388,109 @@ void handle_water() {
   send_json(202, response);
 }
 
+bool parse_hold_request_id(String& request_id) {
+  const String body = server.arg("plain");
+  if (body.length() == 0U || body.length() > kMaximumRequestBodyBytes) {
+    send_error(body.length() == 0U ? 400 : 413, "invalid_request_body");
+    return false;
+  }
+
+  JsonDocument request;
+  const DeserializationError parse_error = deserializeJson(request, body);
+  const JsonObjectConst request_object = request.as<JsonObjectConst>();
+  if (parse_error || request_object.isNull() || request_object.size() != 1U ||
+      !request_object["request_id"].is<const char*>()) {
+    send_error(400, "invalid_request_body");
+    return false;
+  }
+  request_id = request_object["request_id"].as<const char*>();
+  return true;
+}
+
+void handle_hold_start() {
+  if (!require_authorization()) {
+    return;
+  }
+  String request_id;
+  if (!parse_hold_request_id(request_id)) {
+    return;
+  }
+
+  const StartResult result = controller->start_hold(request_id.c_str(), millis());
+  if (result != StartResult::Accepted) {
+    const HttpDecision decision = watering::http_decision(result);
+    Serial.printf("hold start rejected reason=%s\n", decision.code);
+    send_error(decision.status, decision.code);
+    return;
+  }
+
+  if (!preferences_ready ||
+      preferences.putString(kLastRequestKey, request_id) == 0U) {
+    controller->set_error("NVS_WRITE_FAILED", millis());
+    apply_pump_output();
+    Serial.println("hold start rejected reason=NVS_WRITE_FAILED");
+    send_error(500, "persistence_failed");
+    return;
+  }
+  if (!arm_pump_safety_timer(watering::kHoldLeaseMs)) {
+    controller->set_error("SAFETY_TIMER_ARM_FAILED", millis());
+    apply_pump_output();
+    Serial.println("hold start rejected reason=SAFETY_TIMER_ARM_FAILED");
+    send_error(500, "safety_timer_failed");
+    return;
+  }
+
+  apply_pump_output();
+  JsonDocument response;
+  response["accepted"] = true;
+  response["request_id"] = request_id;
+  response["state"] = watering::state_name(controller->state());
+  response["watering_mode"] = "HOLD";
+  response["lease_ms"] = watering::kHoldLeaseMs;
+  response["max_run_ms"] = watering::kHoldMaxRunMs;
+  Serial.printf("hold started request_id=%s lease_ms=%lu max_run_ms=%lu\n",
+                request_id.c_str(),
+                static_cast<unsigned long>(watering::kHoldLeaseMs),
+                static_cast<unsigned long>(watering::kHoldMaxRunMs));
+  send_json(202, response);
+}
+
+void handle_hold_keepalive() {
+  if (!require_authorization()) {
+    return;
+  }
+  String request_id;
+  if (!parse_hold_request_id(request_id)) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  const HoldRenewResult result =
+      controller->renew_hold(request_id.c_str(), now);
+  if (result != HoldRenewResult::Renewed) {
+    apply_pump_output();
+    const HttpDecision decision = watering::http_decision(result);
+    Serial.printf("hold keepalive rejected reason=%s\n", decision.code);
+    send_error(decision.status, decision.code);
+    return;
+  }
+  if (!renew_pump_safety_timer(watering::kHoldLeaseMs)) {
+    controller->set_error("SAFETY_TIMER_RENEW_FAILED", millis());
+    apply_pump_output();
+    Serial.println("hold keepalive rejected reason=SAFETY_TIMER_RENEW_FAILED");
+    send_error(500, "safety_timer_failed");
+    return;
+  }
+
+  apply_pump_output();
+  JsonDocument response;
+  response["renewed"] = true;
+  response["request_id"] = request_id;
+  response["lease_ms"] = watering::kHoldLeaseMs;
+  response["remaining_ms"] = controller->remaining_ms(now);
+  send_json(200, response);
+}
+
 void handle_stop() {
   if (!require_authorization()) {
     return;
@@ -366,6 +513,8 @@ void configure_http_server() {
   server.on("/healthz", HTTP_GET, handle_health);
   server.on("/v1/status", HTTP_GET, handle_status);
   server.on("/v1/water", HTTP_POST, handle_water);
+  server.on("/v1/hold/start", HTTP_POST, handle_hold_start);
+  server.on("/v1/hold/keepalive", HTTP_POST, handle_hold_keepalive);
   server.on("/v1/stop", HTTP_POST, handle_stop);
   server.onNotFound([]() { send_error(404, "not_found"); });
   server.begin();

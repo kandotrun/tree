@@ -15,15 +15,15 @@ M5Stack ATOM Lite, Unit Watering U101, and a small Linux bridge.
 
 ```mermaid
 flowchart LR
-    W[LAN browser] -->|dashboard + bounded manual request| A[ATOM Lite]
+    W[LAN browser] -->|bounded dose or leased hold| A[ATOM Lite]
     H[Hermes Agent] -->|fixed command| B[Linux bridge]
     B -->|LAN-only HTTP + bearer token| A[ATOM Lite]
     A -->|GPIO 26 / ADC 32| U[Unit Watering U101]
 ```
 
-The ATOM Lite owns the physical safety boundary: pump-off boot, an independent
-one-shot cutoff plus watchdog, five-minute boot guard, authenticated bounded-duration
-requests, request deduplication, and emergency stop. The bridge owns
+The ATOM Lite owns the physical safety boundary: pump-off boot, independent
+cutoff timers plus watchdog, five-minute boot guard, authenticated bounded-duration
+requests, a leased dead-man hold mode, request deduplication, and emergency stop. The bridge owns
 request IDs, SQLite history, tank estimation, scheduling decisions, and
 machine-readable results.
 
@@ -37,6 +37,14 @@ machine-readable results.
   validates it against `MAX_RUN_MS` and retains an independent 180-second local
   cutoff. No client can request volume or bypass the cutoff. Bridge/Hermes
   commands intentionally omit duration and use the configured default dose.
+- For longer supervised watering, the dashboard has a press-and-hold control.
+  It sends a heartbeat every 500 ms; the ATOM's independent 1,500 ms lease
+  timer cuts GPIO 26 LOW if heartbeats stop. A hold has a fixed ten-minute
+  absolute cap, and its keepalive endpoint cannot start or restart watering.
+  Official M5Stack documentation states a manufacturer-rated 5 W pump, but
+  power draw and continuous duty have not been measured on this installed unit.
+  Ten minutes is provisional and must not be increased before heat, flow, and
+  drainage are measured on the installed system.
 - The accepted request ID is persisted before the physical pump pin goes high.
 - The default cooldown is zero: after a dose completes or is manually stopped,
   a new request with a distinct ID can start immediately. The active dose still
@@ -83,10 +91,11 @@ See [the development guide](docs/development-guide.md) before connecting U101.
 
 ### Embedded dashboard
 
-After flashing firmware v0.2 or later, open the ATOM Lite's LAN address in a
+After flashing firmware v0.3 or later, open the ATOM Lite's LAN address in a
 browser. The device serves a mobile-first dashboard with live ADC history,
 browser-local dry/wet calibration, bounded 1-180 second manual watering,
-confirmation, and emergency stop. Enter the bearer token when prompted; it is
+dead-man press-and-hold watering for up to ten minutes, confirmation, and
+emergency stop. Enter the bearer token when prompted; it is
 kept in `sessionStorage` for the current tab only. Moisture percentages are
 reference-only and never trigger watering automatically.
 

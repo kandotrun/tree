@@ -1,6 +1,6 @@
 # ベランダ自動水やりシステム 開発ガイド
 
-- Version: 0.2
+- Version: 0.3
 - 更新日: 2026-08-08
 - 対象ハードウェア: M5Stack ATOM Lite + Unit Watering U101
 - 対象環境: macOS、PlatformIO、自宅LinuxミニPC、Hermes Agent
@@ -174,7 +174,7 @@ lib_deps =
 #define API_TOKEN "CHANGE_ME_TO_A_LONG_RANDOM_VALUE"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.2.0"
+#define FIRMWARE_VERSION "0.3.0"
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
 #define LED_PIN 27
@@ -206,6 +206,8 @@ bridge/*.db
 `DOSE_MS=10000`は`duration_sec`を省略するBridge/Hermes用の標準10秒である。
 管理画面はリクエストごとに1-180秒を指定できるが、`MAX_RUN_MS`と
 ファームウェアの180秒絶対上限を超えられない。
+長時間給水は別のhold APIを使い、クライアント指定時間ではなく、固定1,500ms
+リースを500msごとの生存信号で延長する。1回のholdは固定600,000msで停止する。
 `COOLDOWN_MS=0`のため、完了または手動停止の直後から別`request_id`の次要求を受け付ける。
 
 ## 7. ファームウェア責務
@@ -251,6 +253,7 @@ stateDiagram-v2
     IDLE --> WATERING: 認証・新規request_id・安全条件OK
     WATERING --> IDLE: 要求時間またはDOSE_MS経過
     WATERING --> IDLE: MAX_RUN_MS到達
+    WATERING --> IDLE: holdリース失効または600000ms到達
     WATERING --> IDLE: stop要求
 ```
 
@@ -267,6 +270,9 @@ stateDiagram-v2
 `delay(DOSE_MS)`は使わず、`millis()`を使った非ブロッキング制御にする。
 これにより給水中でも緊急停止と状態確認を受けられる。
 給水開始時にはメインループから独立したone-shotタイマーを受理済みの要求時間で起動し、ループ停止時もその時間でGPIO26をLOWへ落とす。要求時間は`MAX_RUN_MS`と180秒絶対上限を超えられない。
+hold開始時は同じ独立タイマーを1,500msで起動し、同一`request_id`の有効な
+keepaliveだけがタイマーを延長する。タイムアウト済みの安全ゲートはkeepaliveで
+再armせず、keepalive単体ではIDLEからWATERINGへ遷移しない。
 タスクWatchdogはその予備停止手段とする。
 
 ## 10. HTTP API仕様
@@ -308,11 +314,15 @@ Authorization: Bearer <API_TOKEN>
   "default_duration_sec": 10,
   "max_duration_sec": 180,
   "scheduled_ms": 10000,
+  "watering_mode": "DOSE",
+  "hold_lease_ms": 1500,
+  "hold_max_run_ms": 600000,
+  "hold_lease_remaining_ms": 0,
   "last_request_id": "01J...",
   "remaining_ms": 0,
   "last_runtime_ms": 10000,
   "last_stop_reason": "DOSE_COMPLETE",
-  "firmware_version": "0.2.0"
+  "firmware_version": "0.3.0"
 }
 ```
 
@@ -359,7 +369,53 @@ HTTP/1.1 202 Accepted
 | 423 | BOOT_GUARD、ERROR、または`WATERING_ARMED=false` |
 | 429 | 旧版または`COOLDOWN_MS>0`設定時のクールダウン中 |
 
-### 10.5 `POST /v1/stop`
+### 10.5 `POST /v1/hold/start`
+
+押下中だけ継続する手動給水を開始する。bodyは`request_id`だけを許可し、
+`duration_sec`、リース長、最大時間などのクライアント指定値は拒否する。
+
+```json
+{
+  "request_id": "web-..."
+}
+```
+
+成功時は`202 Accepted`で、固定安全値を返す。
+
+```json
+{
+  "accepted": true,
+  "request_id": "web-...",
+  "state": "WATERING",
+  "watering_mode": "HOLD",
+  "lease_ms": 1500,
+  "max_run_ms": 600000
+}
+```
+
+受理した`request_id`をNVSへ永続化し、独立タイマーを1,500msでarmしてから
+GPIO26をHIGHにする。給水中、重複ID、BOOT_GUARD、未アーム、ERRORは既存の
+開始拒否規則を適用する。
+
+### 10.6 `POST /v1/hold/keepalive`
+
+有効なholdを500msごとに延長する。bodyはhold開始時と同じ`request_id`だけである。
+稼働中のHOLDかつ同一IDの場合だけ`200 OK`を返し、独立1,500msタイマーを延長する。
+
+```json
+{
+  "renewed": true,
+  "request_id": "web-...",
+  "lease_ms": 1500,
+  "remaining_ms": 599500
+}
+```
+
+IDLE、DOSE中、別ID、リース失効後、停止後は`409`とし、ポンプを開始・再開しない。
+keepaliveはNVSへ書かない。タイマー延長に失敗、またはタイムアウトとの競合が
+発生した場合はGPIO26をLOWにし、ERRORへ遷移する。
+
+### 10.7 `POST /v1/stop`
 
 給水中なら直ちにGPIO26をLOWへする。給水していない場合も成功として扱う。
 
@@ -370,7 +426,7 @@ HTTP/1.1 202 Accepted
 }
 ```
 
-### 10.6 `GET /` 管理画面
+### 10.8 `GET /` 管理画面
 
 ATOM自身がgzip圧縮したHTML/CSS/JavaScriptを配信する。外部CDNや別サーバーは使わない。
 
@@ -380,6 +436,9 @@ ATOM自身がgzip圧縮したHTML/CSS/JavaScriptを配信する。外部CDNや�
 - 乾燥点・湿潤点の2点校正値はブラウザの`localStorage`へ保存する
 - 校正前は乾燥度を表示せず、校正後も参考値に限定する
 - 1-180秒の手動給水は確認ダイアログを経て1回だけ送信する
+- 「押している間だけ水やり」は500msごとにkeepaliveを送り、指を離す、pointer cancel、capture喪失、window blur、画面非表示、pagehideで停止する
+- hold開始結果が不明、またはkeepaliveに失敗した場合は開始を再送せず、best-effortの`POST /v1/stop`を送る
+- holdボタンは押下中にdisabledへ変更せず、モバイルブラウザのpointer releaseを確実に受ける
 - 通信結果が不明な給水要求は自動再送しない
 - 給水中だけ緊急停止ボタンを有効にする
 
@@ -479,6 +538,12 @@ U101を接続し、吐出先を計量容器へ固定してから、ローカル�
 - [ ] `/v1/stop`で直ちに停止する
 - [ ] `duration_sec=1`と`180`が受理され、それぞれ指定時間で停止する
 - [ ] `duration_sec=0`、`181`、小数、文字列、`null`が400で拒否される
+- [ ] hold開始が`HOLD`、`lease_ms=1500`、`max_run_ms=600000`を返す
+- [ ] 500ms間隔の同一ID keepaliveで180秒を超えて継続できる
+- [ ] keepaliveを止めると1,500ms以内に停止し、`HOLD_LEASE_EXPIRED`を記録する
+- [ ] 別ID、停止後、DOSE中のkeepaliveは409で、ポンプを開始・再開しない
+- [ ] holdを継続しても600,000msで`HOLD_MAX_RUN`停止する
+- [ ] ボタンのrelease、pointer cancel、タブ非表示で直ちに停止要求を送る
 - [ ] ブラウザ管理画面から状態、水分ADC、給水確認、停止を操作できる
 - [ ] 管理画面のトークンがURL、HTML、`localStorage`へ残らない
 
@@ -859,6 +924,16 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 - [ ] 組み込みWeb管理画面
 - [ ] 1-180秒の境界値検証
 - [ ] 机上試験合格
+
+### Firmware v0.3.0
+
+- [ ] `/v1/hold/start`が固定1,500msリースと600,000ms上限を返す
+- [ ] 同一`request_id`のkeepaliveだけが有効なHOLDを延長する
+- [ ] 別ID、停止後、DOSE中のkeepaliveがポンプを開始・再開しない
+- [ ] keepalive停止から1,500ms以内に独立タイマーがGPIO26をLOWにする
+- [ ] pointer release、cancel、capture喪失、button/window blur、画面非表示で停止する
+- [ ] 状態機械テストで180秒超の継続と600,000ms絶対停止を確認する
+- [ ] 実機では短時間holdとリース失効だけを試し、流量校正前に180秒超を実給水しない
 
 ### Bridge v0.1.0
 
