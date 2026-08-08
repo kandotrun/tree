@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import closing
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,6 +62,20 @@ class StateStore:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
+
+    @contextmanager
+    def _immediate_transaction(self) -> Iterator[sqlite3.Connection]:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            yield connection
+            connection.execute("COMMIT")
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
 
     def initialize(self) -> None:
         try:
@@ -139,69 +154,57 @@ class StateStore:
         moisture_before: int | None = None,
         schedule_success_cutoff: str | None = None,
     ) -> None:
-        connection: sqlite3.Connection | None = None
         try:
-            connection = self._connect()
-            connection.execute("BEGIN IMMEDIATE")
-            duplicate = connection.execute(
-                "SELECT 1 FROM watering_events WHERE request_id = ?",
-                (request_id,),
-            ).fetchone()
-            if duplicate is not None:
-                raise DuplicateRequest("request_id already exists")
+            with self._immediate_transaction() as connection:
+                duplicate = connection.execute(
+                    "SELECT 1 FROM watering_events WHERE request_id = ?",
+                    (request_id,),
+                ).fetchone()
+                if duplicate is not None:
+                    raise DuplicateRequest("request_id already exists")
 
-            unresolved = connection.execute(
-                """
-                SELECT request_id, result FROM watering_events
-                WHERE result IN ('PENDING', 'ACCEPTED', 'UNKNOWN')
-                ORDER BY requested_at DESC
-                LIMIT 1
-                """
-            ).fetchone()
-            if unresolved is not None:
-                raise UnresolvedRequest(
-                    str(unresolved["request_id"]),
-                    str(unresolved["result"]),
-                )
-
-            if schedule_success_cutoff is not None:
-                recent_success = connection.execute(
+                unresolved = connection.execute(
                     """
-                    SELECT 1 FROM watering_events
-                    WHERE result = 'SUCCESS' AND completed_at > ?
+                    SELECT request_id, result FROM watering_events
+                    WHERE result IN ('PENDING', 'ACCEPTED', 'UNKNOWN')
+                    ORDER BY requested_at DESC
                     LIMIT 1
                     """,
-                    (schedule_success_cutoff,),
                 ).fetchone()
-                if recent_success is not None:
-                    raise ScheduleNotDue("a successful dose is newer than the schedule cutoff")
+                if unresolved is not None:
+                    raise UnresolvedRequest(
+                        str(unresolved["request_id"]),
+                        str(unresolved["result"]),
+                    )
 
-            connection.execute(
-                """
-                INSERT INTO watering_events (
-                    request_id, requested_at, result, dose_ml, moisture_before
-                ) VALUES (?, ?, 'PENDING', ?, ?)
-                """,
-                (request_id, requested_at, dose_ml, moisture_before),
-            )
-            connection.execute("COMMIT")
+                if schedule_success_cutoff is not None:
+                    recent_success = connection.execute(
+                        """
+                        SELECT 1 FROM watering_events
+                        WHERE result = 'SUCCESS' AND completed_at > ?
+                        LIMIT 1
+                        """,
+                        (schedule_success_cutoff,),
+                    ).fetchone()
+                    if recent_success is not None:
+                        raise ScheduleNotDue("a successful dose is newer than the schedule cutoff")
+
+                connection.execute(
+                    """
+                    INSERT INTO watering_events (
+                        request_id, requested_at, result, dose_ml, moisture_before
+                    ) VALUES (?, ?, 'PENDING', ?, ?)
+                    """,
+                    (request_id, requested_at, dose_ml, moisture_before),
+                )
         except (DuplicateRequest, UnresolvedRequest, ScheduleNotDue):
-            if connection is not None and connection.in_transaction:
-                connection.execute("ROLLBACK")
             raise
         except sqlite3.IntegrityError as exc:
-            if connection is not None and connection.in_transaction:
-                connection.execute("ROLLBACK")
             if "watering_events.request_id" in str(exc):
                 raise DuplicateRequest("request_id already exists") from exc
             raise StateError(f"failed to reserve request: {exc}") from exc
         except sqlite3.Error as exc:
-            if connection is not None and connection.in_transaction:
-                connection.execute("ROLLBACK")
             raise StateError(f"failed to reserve request: {exc}") from exc
-        finally:
-            if connection is not None:
-                connection.close()
 
     def _transition(
         self,
@@ -276,60 +279,49 @@ class StateStore:
         runtime_ms: int,
         moisture_after: int | None = None,
     ) -> int:
-        connection: sqlite3.Connection | None = None
         try:
-            connection = self._connect()
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT result, dose_ml FROM watering_events WHERE request_id = ?",
-                (request_id,),
-            ).fetchone()
-            if row is None:
-                raise StateError(f"unknown request_id: {request_id}")
-            if row["result"] == "SUCCESS":
+            with self._immediate_transaction() as connection:
+                row = connection.execute(
+                    "SELECT result, dose_ml FROM watering_events WHERE request_id = ?",
+                    (request_id,),
+                ).fetchone()
+                if row is None:
+                    raise StateError(f"unknown request_id: {request_id}")
+                if row["result"] == "SUCCESS":
+                    remaining = connection.execute(
+                        "SELECT remaining_ml FROM tank_state WHERE id = 1"
+                    ).fetchone()[0]
+                    return int(remaining)
+                if row["result"] != "ACCEPTED":
+                    raise StateError(
+                        f"request {request_id} cannot transition to SUCCESS from {row['result']}"
+                    )
+
+                connection.execute(
+                    """
+                    UPDATE tank_state
+                    SET remaining_ml = MAX(0, remaining_ml - ?), updated_at = ?
+                    WHERE id = 1
+                    """,
+                    (row["dose_ml"], completed_at),
+                )
+                connection.execute(
+                    """
+                    UPDATE watering_events
+                    SET result = 'SUCCESS', completed_at = ?, runtime_ms = ?,
+                        moisture_after = ?, detail = NULL
+                    WHERE request_id = ? AND result = 'ACCEPTED'
+                    """,
+                    (completed_at, runtime_ms, moisture_after, request_id),
+                )
                 remaining = connection.execute(
                     "SELECT remaining_ml FROM tank_state WHERE id = 1"
                 ).fetchone()[0]
-                connection.execute("COMMIT")
                 return int(remaining)
-            if row["result"] != "ACCEPTED":
-                raise StateError(
-                    f"request {request_id} cannot transition to SUCCESS from {row['result']}"
-                )
-
-            connection.execute(
-                """
-                UPDATE tank_state
-                SET remaining_ml = MAX(0, remaining_ml - ?), updated_at = ?
-                WHERE id = 1
-                """,
-                (row["dose_ml"], completed_at),
-            )
-            connection.execute(
-                """
-                UPDATE watering_events
-                SET result = 'SUCCESS', completed_at = ?, runtime_ms = ?,
-                    moisture_after = ?, detail = NULL
-                WHERE request_id = ? AND result = 'ACCEPTED'
-                """,
-                (completed_at, runtime_ms, moisture_after, request_id),
-            )
-            remaining = connection.execute(
-                "SELECT remaining_ml FROM tank_state WHERE id = 1"
-            ).fetchone()[0]
-            connection.execute("COMMIT")
-            return int(remaining)
         except StateError:
-            if connection is not None and connection.in_transaction:
-                connection.execute("ROLLBACK")
             raise
         except sqlite3.Error as exc:
-            if connection is not None and connection.in_transaction:
-                connection.execute("ROLLBACK")
             raise StateError(f"failed to complete request {request_id}: {exc}") from exc
-        finally:
-            if connection is not None:
-                connection.close()
 
     def get_event(self, request_id: str) -> WateringEvent:
         try:

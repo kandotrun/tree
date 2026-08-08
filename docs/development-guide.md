@@ -1,6 +1,6 @@
 # ベランダ自動水やりシステム 開発ガイド
 
-- Version: 0.3
+- Version: 0.4
 - 更新日: 2026-08-08
 - 対象ハードウェア: M5Stack ATOM Lite + Unit Watering U101
 - 対象環境: macOS、PlatformIO、自宅LinuxミニPC、Hermes Agent
@@ -174,7 +174,7 @@ lib_deps =
 #define API_TOKEN "CHANGE_ME_TO_A_LONG_RANDOM_VALUE"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.3.0"
+#define FIRMWARE_VERSION "0.4.0"
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
 #define LED_PIN 27
@@ -322,7 +322,7 @@ Authorization: Bearer <API_TOKEN>
   "remaining_ms": 0,
   "last_runtime_ms": 10000,
   "last_stop_reason": "DOSE_COMPLETE",
-  "firmware_version": "0.3.0"
+  "firmware_version": "0.4.0"
 }
 ```
 
@@ -925,9 +925,11 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 - [ ] 1-180秒の境界値検証
 - [ ] 机上試験合格
 
-### Firmware v0.3.0
+### Firmware v0.4.0
 
 - [ ] `/v1/hold/start`が固定1,500msリースと600,000ms上限を返す
+- [ ] 給水操作がmobileでセンサー校正より先に表示される
+- [ ] センサー値が変化しない間は空の履歴グラフを表示しない
 - [ ] 同一`request_id`のkeepaliveだけが有効なHOLDを延長する
 - [ ] 別ID、停止後、DOSE中のkeepaliveがポンプを開始・再開しない
 - [ ] keepalive停止から1,500ms以内に独立タイマーがGPIO26をLOWにする

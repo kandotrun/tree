@@ -34,6 +34,7 @@ _STATUS_INTEGER_FIELDS = {
     "remaining_ms": (0, 0xFFFFFFFF),
     "last_runtime_ms": (0, 0xFFFFFFFF),
 }
+_STATUS_TEXT_FIELDS = ("last_stop_reason", "error_reason", "firmware_version")
 
 
 class AtomHTTPError(AtomError):
@@ -167,6 +168,55 @@ class AtomClient:
             authenticated=False,
         )
 
+    @staticmethod
+    def _copy_status_integers(
+        payload: dict[str, Any],
+        sanitized: dict[str, Any],
+    ) -> None:
+        for field, (minimum, maximum) in _STATUS_INTEGER_FIELDS.items():
+            if field not in payload:
+                continue
+            value = payload[field]
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise AtomProtocolError(f"ATOM status {field} was invalid")
+            sanitized[field] = value
+
+    def _copy_status_request_id(
+        self,
+        payload: dict[str, Any],
+        sanitized: dict[str, Any],
+    ) -> None:
+        if "last_request_id" not in payload:
+            return
+        request_id = payload["last_request_id"]
+        valid = request_id == "" or (
+            isinstance(request_id, str)
+            and _REQUEST_ID_RE.fullmatch(request_id) is not None
+            and request_id != self._token
+        )
+        if not valid:
+            raise AtomProtocolError("ATOM status last_request_id was invalid")
+        sanitized["last_request_id"] = request_id
+
+    def _copy_status_text(
+        self,
+        payload: dict[str, Any],
+        sanitized: dict[str, Any],
+    ) -> None:
+        for field in _STATUS_TEXT_FIELDS:
+            if field not in payload:
+                continue
+            value = payload[field]
+            if (
+                not isinstance(value, str)
+                or len(value) > 31
+                or not value.isascii()
+                or not value.isprintable()
+                or value == self._token
+            ):
+                raise AtomProtocolError(f"ATOM status {field} was invalid")
+            sanitized[field] = value
+
     def status(self) -> dict[str, Any]:
         payload = self._request(
             "GET",
@@ -182,38 +232,9 @@ class AtomClient:
             raise AtomProtocolError("ATOM status pump flag was invalid")
 
         sanitized: dict[str, Any] = {"state": state, "pump": pump}
-        for field, (minimum, maximum) in _STATUS_INTEGER_FIELDS.items():
-            if field not in payload:
-                continue
-            value = payload[field]
-            if type(value) is not int or not minimum <= value <= maximum:
-                raise AtomProtocolError(f"ATOM status {field} was invalid")
-            sanitized[field] = value
-
-        if "last_request_id" in payload:
-            request_id = payload["last_request_id"]
-            valid_request_id = request_id == "" or (
-                isinstance(request_id, str)
-                and _REQUEST_ID_RE.fullmatch(request_id) is not None
-                and request_id != self._token
-            )
-            if not valid_request_id:
-                raise AtomProtocolError("ATOM status last_request_id was invalid")
-            sanitized["last_request_id"] = request_id
-
-        for field in ("last_stop_reason", "error_reason", "firmware_version"):
-            if field not in payload:
-                continue
-            value = payload[field]
-            if (
-                not isinstance(value, str)
-                or len(value) > 31
-                or not value.isascii()
-                or not value.isprintable()
-                or value == self._token
-            ):
-                raise AtomProtocolError(f"ATOM status {field} was invalid")
-            sanitized[field] = value
+        self._copy_status_integers(payload, sanitized)
+        self._copy_status_request_id(payload, sanitized)
+        self._copy_status_text(payload, sanitized)
         return sanitized
 
     def water(
