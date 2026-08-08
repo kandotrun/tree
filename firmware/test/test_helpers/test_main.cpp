@@ -1,5 +1,4 @@
 #include <cstdint>
-#include <string>
 
 #include <unity.h>
 #include <ArduinoJson.h>
@@ -13,7 +12,6 @@ using watering::HoldRenewResult;
 using watering::PumpSafetyGate;
 using watering::RequestedDuration;
 using watering::StartResult;
-using watering::constant_time_equals;
 using watering::http_decision;
 using watering::median_u16;
 using watering::resolve_requested_duration;
@@ -78,17 +76,6 @@ void test_hold_renew_results_have_stable_http_mapping() {
   decision = http_decision(HoldRenewResult::Expired);
   TEST_ASSERT_EQUAL_INT(409, decision.status);
   TEST_ASSERT_EQUAL_STRING("hold_expired", decision.code);
-}
-
-void test_constant_time_token_comparison_handles_mismatch_and_bounds() {
-  TEST_ASSERT_TRUE(constant_time_equals("same-token", "same-token", 64U));
-  TEST_ASSERT_FALSE(constant_time_equals("same-token", "Same-token", 64U));
-  TEST_ASSERT_FALSE(constant_time_equals("same-token", "same-token-extra", 64U));
-  TEST_ASSERT_FALSE(constant_time_equals(nullptr, "same-token", 64U));
-  TEST_ASSERT_FALSE(constant_time_equals("same-token", nullptr, 64U));
-
-  const std::string too_long(65U, 'a');
-  TEST_ASSERT_FALSE(constant_time_equals(too_long.c_str(), too_long.c_str(), 64U));
 }
 
 void test_request_duration_defaults_and_validates_before_pump_control() {
@@ -178,7 +165,6 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_start_results_have_stable_http_mapping);
   RUN_TEST(test_hold_renew_results_have_stable_http_mapping);
-  RUN_TEST(test_constant_time_token_comparison_handles_mismatch_and_bounds);
   RUN_TEST(test_request_duration_defaults_and_validates_before_pump_control);
   RUN_TEST(test_json_duration_accepts_only_bounded_unsigned_integers);
   RUN_TEST(test_median_filter_rejects_single_large_outlier);

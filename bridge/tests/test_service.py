@@ -84,7 +84,6 @@ class FakeAtomClient:
 def make_settings(tmp_path: Path) -> Settings:
     return Settings(
         atom_url="http://127.0.0.1",
-        atom_api_token="t" * 32,
         dose_ml=800,
         tank_usable_ml=18_000,
         low_tank_doses=3,
@@ -214,15 +213,15 @@ def test_offline_preflight_never_reserves_or_sends_request(tmp_path: Path) -> No
     assert all(call[0] != "water" for call in client.calls)
 
 
-def test_auth_rejection_is_definitive_and_does_not_decrement_tank(tmp_path: Path) -> None:
+def test_invalid_request_is_definitive_and_does_not_decrement_tank(tmp_path: Path) -> None:
     client = FakeAtomClient()
-    client.water_result = AtomHTTPError(401, {"error": "unauthorized"})
+    client.water_result = AtomHTTPError(400, {"error": "invalid_request_body"})
     service, store, _, _ = make_service(tmp_path, client=client)
 
     result = service.water()
 
     assert result["result"] == "REJECTED"
-    assert result["http_status"] == 401
+    assert result["http_status"] == 400
     assert store.get_event("request-1").result == "REJECTED"
     assert store.tank_remaining_ml() == 18_000
 

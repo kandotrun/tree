@@ -171,10 +171,9 @@ lib_deps =
 
 #define WIFI_SSID "CHANGE_ME"
 #define WIFI_PASSWORD "CHANGE_ME"
-#define API_TOKEN "CHANGE_ME_TO_A_LONG_RANDOM_VALUE"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.4.0"
+#define FIRMWARE_VERSION "0.4.1"
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
 #define LED_PIN 27
@@ -216,7 +215,6 @@ bridge/*.db
 
 - Wi-Fi接続と再接続
 - HTTP API
-- API認証
 - ポンプ状態機械
 - ローカル停止タイマー
 - 水分ADC取得
@@ -250,7 +248,7 @@ Wi-Fi接続より前にpump OFFを確定する。
 stateDiagram-v2
     [*] --> BOOT_GUARD
     BOOT_GUARD --> IDLE: BOOT_GUARD_MS経過
-    IDLE --> WATERING: 認証・新規request_id・安全条件OK
+    IDLE --> WATERING: 新規request_id・安全条件OK
     WATERING --> IDLE: 要求時間またはDOSE_MS経過
     WATERING --> IDLE: MAX_RUN_MS到達
     WATERING --> IDLE: holdリース失効または600000ms到達
@@ -279,15 +277,11 @@ keepaliveだけがタイマーを延長する。タイムアウト済みの安�
 
 ATOMは自宅LAN内でのみHTTPを提供する。
 
-### 10.1 認証
+### 10.1 アクセス境界
 
-`/healthz`以外の`/v1/*` APIは次のヘッダーを要求する。
-
-```http
-Authorization: Bearer <API_TOKEN>
-```
-
-トークンなし、または不一致の場合は`401 Unauthorized`を返す。
+`/healthz`と`/v1/*`を含む全APIは、意図的にアプリケーション認証を要求しない。
+クライアントは`Authorization`ヘッダーを送らない。
+ATOMへ到達できる端末は給水命令を送れるため、信頼済みLANまたは分離したIoT VLANだけで使い、WANやゲストネットワークへ公開しない。
 
 ### 10.2 `GET /healthz`
 
@@ -322,7 +316,7 @@ Authorization: Bearer <API_TOKEN>
   "remaining_ms": 0,
   "last_runtime_ms": 10000,
   "last_stop_reason": "DOSE_COMPLETE",
-  "firmware_version": "0.4.0"
+  "firmware_version": "0.4.1"
 }
 ```
 
@@ -364,7 +358,6 @@ HTTP/1.1 202 Accepted
 | Status | 意味 |
 |---:|---|
 | 400 | `request_id`がない・形式不正、または指定した`duration_sec`が形式不正・範囲外 |
-| 401 | 認証失敗 |
 | 409 | 給水中、または同じ`request_id` |
 | 423 | BOOT_GUARD、ERROR、または`WATERING_ARMED=false` |
 | 429 | 旧版または`COOLDOWN_MS>0`設定時のクールダウン中 |
@@ -430,8 +423,8 @@ keepaliveはNVSへ書かない。タイマー延長に失敗、またはタイ�
 
 ATOM自身がgzip圧縮したHTML/CSS/JavaScriptを配信する。外部CDNや別サーバーは使わない。
 
-- APIトークンは画面へ埋め込まず、利用者が入力する
-- トークンは現在のタブの`sessionStorage`だけに保持する
+- 認証入力を表示せず、読み込み直後に状態取得を始める
+- API要求に`Authorization`ヘッダーを付けない
 - 水分ADCと直近90サンプルの推移を表示する
 - 乾燥点・湿潤点の2点校正値はブラウザの`localStorage`へ保存する
 - 校正前は乾燥度を表示せず、校正後も参考値に限定する
@@ -514,13 +507,13 @@ pio device monitor --port /dev/cu.usbserial-XXXX --baud 115200
 - [ ] `/healthz`が200を返す
 - [ ] 起動中にポンプが動かない
 
-### Test 2: 認証と未アームガード
+### Test 2: 無認証APIと未アームガード
 
 `WATERING_ARMED=false`のまま、`BOOT_GUARD`終了後に確認する。
 
-- [ ] トークンなしの`POST /v1/water`が401
-- [ ] 誤トークンが401
-- [ ] 正しいトークンでも423 `not_armed`となる
+- [ ] 認証ヘッダーなしの`GET /v1/status`が200を返す
+- [ ] 認証ヘッダーなしの`POST /v1/water`が423 `not_armed`となる
+- [ ] 形式不正な要求は400となる
 - [ ] どの場合もGPIO26がLOWのままで、ポンプが動かない
 
 ### Test 3: 計量容器への10秒給水
@@ -530,7 +523,7 @@ U101を接続し、吐出先を計量容器へ固定してから、ローカル�
 終了し、`/v1/status`が`IDLE`を返すまで待つ。サンプル設定の
 `config.example.h`は`false`のままコミットする。
 
-- [ ] 正しいトークンの`POST /v1/water`だけが202を返す
+- [ ] 認証ヘッダーなしの`POST /v1/water`が202を返す
 - [ ] 10秒で自動停止する
 - [ ] 通信を途中で切っても停止する
 - [ ] 給水中の再要求が409
@@ -545,7 +538,7 @@ U101を接続し、吐出先を計量容器へ固定してから、ローカル�
 - [ ] holdを継続しても600,000msで`HOLD_MAX_RUN`停止する
 - [ ] ボタンのrelease、pointer cancel、タブ非表示で直ちに停止要求を送る
 - [ ] ブラウザ管理画面から状態、水分ADC、給水確認、停止を操作できる
-- [ ] 管理画面のトークンがURL、HTML、`localStorage`へ残らない
+- [ ] 管理画面が認証入力なしで開き、API要求に`Authorization`ヘッダーがない
 
 ### Test 4: 再起動
 
@@ -593,7 +586,7 @@ Bridge/Hermesが使う標準1回分を変える場合だけ`DOSE_MS`を更新し
 
 ```text
 /opt/balcony-watering/        アプリケーション
-/etc/balcony-watering.env     秘密情報・設定
+/etc/balcony-watering.env     設定
 /var/lib/balcony-watering/    SQLite DB
 /var/log/balcony-watering/    任意のログ出力
 ```
@@ -604,7 +597,6 @@ Bridge/Hermesが使う標準1回分を変える場合だけ`DOSE_MS`を更新し
 
 ```dotenv
 ATOM_URL=http://192.168.1.50
-ATOM_API_TOKEN=CHANGE_ME
 DOSE_ML=800
 TANK_USABLE_ML=18000
 LOW_TANK_DOSES=3
@@ -800,7 +792,7 @@ WantedBy=timers.target
 - 水分ADC
 - ウォッチドッグリセット
 
-トークン、Wi-Fiパスワードは出力しない。
+Wi-Fiパスワードは出力しない。
 
 ### ミニPC
 
@@ -813,14 +805,16 @@ WantedBy=timers.target
 
 - ATOMのHTTP APIをWANへ公開しない
 - ルーターのポート転送を設定しない
-- APIトークンは32バイト以上のランダム値を使う
+- APIと管理画面にはアプリケーション認証がないため、ATOMへ到達できるLAN内端末を信頼済みに限定する
 - ミニPCの環境ファイルを権限600にする
 - Hermesから実行できるコマンドを固定する
 - SSH鍵とTailscale認証をリポジトリへ入れない
 - ログへ認証情報を出さない
 - 可能ならIoT用SSIDまたはVLANを利用する
 
-LAN内HTTPのため通信自体は暗号化されない。初期版では「外部公開しない」「信頼済みLAN」「長いトークン」「呼び出し元をミニPCへ限定」で保護する。将来、ネットワーク分離が必要になった場合はHTTPS化より先にVLANまたはゲートウェイ方式を検討する。
+LAN内HTTPのため通信は暗号化されず、アプリケーション認証もない。
+初期版では「外部公開しない」「信頼済みLANまたは分離したIoT VLAN」「Hermesの呼び出し先をミニPCの固定コマンドへ限定」で保護する。
+将来、ネットワーク分離が必要になった場合はHTTPS化より先にVLANまたはゲートウェイ方式を検討する。
 
 ## 25. テストケース
 
@@ -830,8 +824,8 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 |---|---|---|
 | FW-01 | 起動 | pump OFF |
 | FW-02 | BOOT_GUARD中の給水 | 拒否 |
-| FW-03 | 正しい認証で給水 | 202、WATERING |
-| FW-04 | 誤認証 | 401、pump OFF |
+| FW-03 | 認証ヘッダーなしで有効な給水要求 | 202、WATERING |
+| FW-04 | 形式不正な要求 | 400、pump OFF |
 | FW-05 | 同じrequest_id | 2回目を拒否 |
 | FW-06 | 給水中の再要求 | 409 |
 | FW-07 | 給水完了直後の別ID要求 | 待機なしで受付 |
@@ -913,7 +907,7 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 
 - [ ] pump OFF起動
 - [ ] Wi-Fi接続
-- [ ] HTTP認証
+- [ ] LAN内HTTP API
 - [ ] `/healthz`
 - [ ] `/v1/status`
 - [ ] `/v1/water`
@@ -936,6 +930,13 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 - [ ] pointer release、cancel、capture喪失、button/window blur、画面非表示で停止する
 - [ ] 状態機械テストで180秒超の継続と600,000ms絶対停止を確認する
 - [ ] 実機では短時間holdとリース失効だけを試し、流量校正前に180秒超を実給水しない
+
+### Firmware v0.4.1
+
+- [ ] 全APIが`Authorization`ヘッダーなしで応答する
+- [ ] 管理画面が認証入力なしで開く
+- [ ] Bridge設定にAPIトークンがなく、HTTP要求にも認証ヘッダーがない
+- [ ] LAN外宛先拒否と全給水安全制約が維持される
 
 ### Bridge v0.1.0
 

@@ -8,7 +8,6 @@ from balcony_watering.config import ConfigError, Settings, load_settings
 
 BASE_ENV = {
     "ATOM_URL": "http://192.168.1.50",
-    "ATOM_API_TOKEN": "a" * 32,
     "DOSE_ML": "800",
     "TANK_USABLE_ML": "18000",
     "LOW_TANK_DOSES": "3",
@@ -25,7 +24,7 @@ def test_settings_accept_safe_lan_configuration() -> None:
     settings = Settings.from_mapping(BASE_ENV)
 
     assert settings.atom_url == "http://192.168.1.50"
-    assert settings.atom_api_token == "a" * 32
+    assert not hasattr(settings, "atom_api_token")
     assert settings.dose_ml == 800
     assert settings.tank_usable_ml == 18_000
     assert settings.database_path == Path("/tmp/watering.db")
@@ -43,10 +42,6 @@ def test_settings_accept_safe_lan_configuration() -> None:
         ("ATOM_URL", "http://192.168.1.50/v1", "origin only"),
         ("ATOM_URL", "http://user:pass@192.168.1.50", "credentials"),
         ("ATOM_URL", "http://192.168.1.50?debug=1", "origin only"),
-        ("ATOM_API_TOKEN", "short", "at least 32"),
-        ("ATOM_API_TOKEN", "a" * 16 + "\r" + "a" * 16, "printable ASCII"),
-        ("ATOM_API_TOKEN", "a" * 257, "32-256"),
-        ("ATOM_API_TOKEN", "CHANGE_ME_TO_A_LONG_RANDOM_VALUE", "placeholder"),
         ("DOSE_ML", "0", "positive"),
         ("TANK_USABLE_ML", "400", "at least DOSE_ML"),
         ("LOW_TANK_DOSES", "100", "usable tank capacity"),
@@ -86,7 +81,6 @@ def test_load_settings_uses_environment_over_file(tmp_path: Path) -> None:
             [
                 "# local configuration",
                 "ATOM_URL=http://192.168.1.10",
-                f"ATOM_API_TOKEN={'b' * 32}",
                 "DOSE_ML=700",
                 "TANK_USABLE_ML=18000",
                 "LOW_TANK_DOSES=3",
@@ -108,4 +102,3 @@ def test_load_settings_uses_environment_over_file(tmp_path: Path) -> None:
 
     assert settings.atom_url == "http://192.168.1.20"
     assert settings.dose_ml == 900
-    assert settings.atom_api_token == "b" * 32

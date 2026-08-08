@@ -15,7 +15,7 @@ details, or an exploit that could activate a pump.
 
 Include the affected commit/version, impact, reproduction steps that do not
 operate a real pump where possible, and a proposed mitigation. Never include a
-real Wi-Fi password, bearer token, private IP inventory, SSH key, runtime DB, or
+real Wi-Fi password, private IP inventory, SSH key, runtime DB, or
 production log.
 
 ## Supported version

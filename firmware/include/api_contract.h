@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 
 #include <ArduinoJson.h>
@@ -28,7 +27,4 @@ RequestedDuration resolve_requested_duration(bool provided, bool is_integer,
 RequestedDuration resolve_requested_duration(
     JsonVariantConst duration_value, uint32_t default_duration_ms,
     uint32_t maximum_duration_ms);
-bool constant_time_equals(const char* left, const char* right,
-                          std::size_t max_length);
-
 }  // namespace watering

@@ -21,16 +21,18 @@ that the pump turns off locally even if Wi-Fi, the bridge, or Hermes fails.
   retrying start; loss of heartbeats must still stop the pump locally.
 - Persist the accepted request ID before physically enabling the pump.
 - Keep the API LAN-only. Never add port forwarding, public ingress, or secrets.
+- The HTTP API and embedded dashboard intentionally have no application-layer
+  authentication. Treat the trusted LAN as the only access boundary; anyone
+  who can reach the ATOM can issue pump commands.
 - Keep automatic scheduling disabled until calibration, 72-hour power testing,
   siphon/drainage/leak checks, and a two-week supervised pilot pass.
 - Do not use moisture ADC values as an automatic start condition until real
   calibration data exists.
-- Keep dashboard calibration browser-local and non-actuating. Never persist the
-  bearer token beyond `sessionStorage` or embed it in dashboard assets.
+- Keep dashboard calibration browser-local and non-actuating.
 
 ## Public repository rules
 
-- Commit examples only. Never commit Wi-Fi credentials, bearer tokens, private
+- Commit examples only. Never commit Wi-Fi credentials, private
   IP inventories, SSH/Tailscale material, runtime databases, or real logs.
 - Use placeholders in screenshots and documentation.
 - Run a staged-file secret scan before every push.

@@ -70,7 +70,6 @@ def build_service() -> WateringService:
     store.initialize()
     client = AtomClient(
         settings.atom_url,
-        settings.atom_api_token,
         connect_timeout_sec=settings.connect_timeout_sec,
         request_timeout_sec=settings.request_timeout_sec,
     )

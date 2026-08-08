@@ -110,10 +110,8 @@ def test_real_client_and_service_accept_full_firmware_cooldown_contract(tmp_path
     thread.start()
 
     try:
-        token = "t" * 32
         settings = Settings(
             atom_url=f"http://127.0.0.1:{server.server_port}",
-            atom_api_token=token,
             dose_ml=800,
             tank_usable_ml=18_000,
             low_tank_doses=3,
@@ -128,7 +126,6 @@ def test_real_client_and_service_accept_full_firmware_cooldown_contract(tmp_path
         store.initialize()
         client = AtomClient(
             settings.atom_url,
-            settings.atom_api_token,
             connect_timeout_sec=settings.connect_timeout_sec,
             request_timeout_sec=settings.request_timeout_sec,
         )
@@ -148,7 +145,7 @@ def test_real_client_and_service_accept_full_firmware_cooldown_contract(tmp_path
         assert store.get_event("request-1").result == "SUCCESS"
         assert handler.water_requests == [
             {
-                "authorization": f"Bearer {token}",
+                "authorization": None,
                 "body": {"request_id": "request-1"},
             }
         ]

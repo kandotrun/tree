@@ -17,12 +17,12 @@ M5Stack ATOM Lite, Unit Watering U101, and a small Linux bridge.
 flowchart LR
     W[LAN browser] -->|bounded dose or leased hold| A[ATOM Lite]
     H[Hermes Agent] -->|fixed command| B[Linux bridge]
-    B -->|LAN-only HTTP + bearer token| A[ATOM Lite]
+    B -->|LAN-only HTTP| A[ATOM Lite]
     A -->|GPIO 26 / ADC 32| U[Unit Watering U101]
 ```
 
 The ATOM Lite owns the physical safety boundary: pump-off boot, independent
-cutoff timers plus watchdog, five-minute boot guard, authenticated bounded-duration
+cutoff timers plus watchdog, five-minute boot guard, bounded-duration
 requests, a leased dead-man hold mode, request deduplication, and emergency stop. The bridge owns
 request IDs, SQLite history, tank estimation, scheduling decisions, and
 machine-readable results.
@@ -55,9 +55,10 @@ machine-readable results.
   outlet points into a measuring container and commissioning checks pass.
 - The bridge refuses public destinations, and the ATOM API must not be exposed
   through port forwarding or public ingress.
-- HTTP bearer authentication assumes a trusted WPA2/WPA3 LAN. Do not place the
-  ATOM on a guest or otherwise untrusted network; rotate both token copies after
-  any LAN credential compromise.
+- The HTTP API and embedded dashboard intentionally have no application-layer
+  authentication. Anyone who can reach the ATOM can issue pump commands. Keep
+  it on a trusted WPA2/WPA3 LAN or isolated IoT VLAN, never on a guest network,
+  and rotate the Wi-Fi credentials after any LAN credential compromise.
 
 Software safety controls reduce risk; they do not replace drainage, leak,
 siphon, power, weatherproofing, and physical inspection.
@@ -85,8 +86,8 @@ pio test -e native
 pio run -e m5stack-atom
 ```
 
-`config.h` is ignored by Git. Replace the placeholders locally and use a random
-32-byte-or-longer API token. Keep `WATERING_ARMED false` for the first flash.
+`config.h` is ignored by Git. Replace the Wi-Fi placeholders locally and keep
+`WATERING_ARMED false` for the first flash.
 See [the development guide](docs/development-guide.md) before connecting U101.
 
 ### Embedded dashboard
@@ -95,9 +96,8 @@ After flashing firmware v0.3 or later, open the ATOM Lite's LAN address in a
 browser. The device serves a mobile-first dashboard with live ADC history,
 browser-local dry/wet calibration, bounded 1-180 second manual watering,
 dead-man press-and-hold watering for up to ten minutes, confirmation, and
-emergency stop. Enter the bearer token when prompted; it is
-kept in `sessionStorage` for the current tab only. Moisture percentages are
-reference-only and never trigger watering automatically.
+emergency stop. It opens directly without a login or API token. Moisture
+percentages are reference-only and never trigger watering automatically.
 
 When editing `firmware/web/index.html`, regenerate and verify the compressed
 flash asset:
@@ -136,10 +136,11 @@ codes, and the optional systemd timer.
   native tests.
 - Bridge behavior, SQLite transitions, HTTP handling, and no-retry semantics
   have automated tests.
-- Firmware v0.3 was physically flashed and verified for boot guard, authentication,
+- Firmware safety paths were physically flashed and verified for boot guard,
   bounded one-shot watering, dead-man hold lease expiry, keepalive, manual stop,
-  and local pump-off behavior. The v0.4 dashboard refresh is automated-test and
-  browser verified; physical operation still uses the unchanged v0.3 safety paths.
+  and local pump-off behavior. The v0.4 dashboard is automated-test, browser,
+  and on-device asset verified. v0.4.1 removes application authentication
+  without changing the physical safety paths.
 - Measured flow, waterproofing, power endurance, drainage, siphon behavior, and
   the supervised pilot remain incomplete.
 - Automatic scheduling remains disabled by default.
@@ -153,7 +154,7 @@ codes, and the optional systemd timer.
 
 ## Public repository policy
 
-Commit examples only. Never commit Wi-Fi credentials, bearer tokens, private
+Commit examples only. Never commit Wi-Fi credentials, private
 network inventories, SSH/Tailscale material, runtime databases, or real logs.
 Use a staged-file secret scan before every push.
 

@@ -18,7 +18,7 @@ _ALLOWED_IPV6_NETWORKS = (
 
 
 def is_allowed_local_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Return whether an address is explicitly allowed for token-bearing LAN traffic."""
+    """Return whether an address is explicitly allowed for ATOM LAN traffic."""
     if address.is_unspecified or address.is_multicast:
         return False
     networks = _ALLOWED_IPV4_NETWORKS if address.version == 4 else _ALLOWED_IPV6_NETWORKS

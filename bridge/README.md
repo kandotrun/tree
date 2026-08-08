@@ -1,6 +1,6 @@
 # Balcony Watering Bridge
 
-The bridge turns a small, fixed command surface into authenticated LAN requests
+The bridge turns a small, fixed command surface into LAN-only requests
 to the ATOM Lite. It records every attempted dose in SQLite and prints exactly
 one JSON object for Hermes or another caller.
 
@@ -17,7 +17,7 @@ one JSON object for Hermes or another caller.
   or safety stop remains `UNKNOWN` and does not subtract the full configured dose.
 - Hostnames are resolved before connection and every resolved address must be an
   explicitly allowed RFC1918, loopback, link-local, IPv6 ULA, or Tailscale/shared
-  address. The bearer token is never sent to public, documentation, benchmarking,
+  address. Requests are never sent to public, documentation, benchmarking,
   multicast, or unspecified address ranges.
 - A schedule with no successful manual history skips rather than issuing the
   first dose automatically.
@@ -33,8 +33,8 @@ uv run --project bridge ruff check bridge
 uv run --project bridge ruff format --check bridge
 ```
 
-For a local dry status check, copy `config.example.env`, use a test-only token,
-and point `BALCONY_WATERING_ENV_FILE` at the copy. Do not commit it.
+For a local dry status check, copy `config.example.env` and point
+`BALCONY_WATERING_ENV_FILE` at the copy. Do not commit it.
 
 ## Configuration
 
@@ -56,15 +56,11 @@ not a pump duration. The low-level `AtomClient.water()` mirrors the firmware API
 and accepts an optional bounded `duration_sec`, but the shipped bridge service,
 CLI, and Hermes commands do not expose or send it. Firmware therefore uses
 `DOSE_MS` for every bridge-triggered dose.
-Because the initial ATOM firmware does not terminate TLS, use a trusted
-WPA2/WPA3 LAN with no guest clients and never expose the API through public
-ingress. Rotate the shared token if the LAN credentials may be compromised.
-
-Generate the same API token for firmware and bridge with, for example:
-
-```bash
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
-```
+The ATOM API intentionally has no application-layer authentication and does not
+terminate TLS. Any client that can reach it can issue pump commands. Use a
+trusted WPA2/WPA3 LAN or isolated IoT VLAN with no guest clients, never expose
+the API through public ingress, and rotate Wi-Fi credentials if LAN access may
+be compromised.
 
 ## Production install
 

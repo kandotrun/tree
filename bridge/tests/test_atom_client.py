@@ -76,13 +76,12 @@ def fake_atom() -> Iterator[tuple[str, type[FakeAtomHandler]]]:
 def make_client(base_url: str) -> AtomClient:
     return AtomClient(
         base_url,
-        "t" * 32,
         connect_timeout_sec=1,
         request_timeout_sec=2,
     )
 
 
-def test_health_is_read_without_sending_the_bearer_token(
+def test_health_is_read_without_authorization(
     fake_atom: tuple[str, type[FakeAtomHandler]],
 ) -> None:
     base_url, handler = fake_atom
@@ -93,13 +92,15 @@ def test_health_is_read_without_sending_the_bearer_token(
     assert handler.observed_requests[-1]["authorization"] is None
 
 
-def test_status_sends_bearer_token(fake_atom: tuple[str, type[FakeAtomHandler]]) -> None:
+def test_status_is_read_without_authorization(
+    fake_atom: tuple[str, type[FakeAtomHandler]],
+) -> None:
     base_url, handler = fake_atom
 
     result = make_client(base_url).status()
 
     assert result["state"] == "IDLE"
-    assert handler.observed_requests[-1]["authorization"] == f"Bearer {'t' * 32}"
+    assert handler.observed_requests[-1]["authorization"] is None
 
 
 def test_status_accepts_empty_last_stop_reason_emitted_before_first_completion(
@@ -161,7 +162,7 @@ def test_water_sends_only_request_id_when_duration_is_omitted(
     body = request["body"]
     assert isinstance(body, bytes)
     assert json.loads(body) == {"request_id": "request-1"}
-    assert request["authorization"] == f"Bearer {'t' * 32}"
+    assert request["authorization"] is None
 
 
 def test_water_sends_a_bounded_duration_for_each_request(
@@ -194,7 +195,9 @@ def test_water_rejects_an_invalid_duration_before_network_access(
     assert handler.observed_requests == []
 
 
-def test_stop_is_authenticated(fake_atom: tuple[str, type[FakeAtomHandler]]) -> None:
+def test_stop_is_sent_without_authorization(
+    fake_atom: tuple[str, type[FakeAtomHandler]],
+) -> None:
     base_url, handler = fake_atom
     handler.route_responses[("POST", "/v1/stop")] = (
         200,
@@ -204,7 +207,7 @@ def test_stop_is_authenticated(fake_atom: tuple[str, type[FakeAtomHandler]]) -> 
     result = make_client(base_url).stop()
 
     assert result == {"stopped": True, "state": "COOLDOWN"}
-    assert handler.observed_requests[-1]["authorization"] == f"Bearer {'t' * 32}"
+    assert handler.observed_requests[-1]["authorization"] is None
 
 
 def test_http_rejection_preserves_status_and_payload(
@@ -248,7 +251,7 @@ def test_malformed_json_is_a_protocol_error(fake_atom: tuple[str, type[FakeAtomH
         make_client(base_url).status()
 
 
-def test_connection_failure_is_reported_without_exposing_token() -> None:
+def test_connection_failure_is_reported_without_os_error_details() -> None:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         unused_tcp_port = probe.getsockname()[1]
@@ -258,14 +261,16 @@ def test_connection_failure_is_reported_without_exposing_token() -> None:
     with pytest.raises(AtomConnectionError) as captured:
         client.health()
 
-    assert "t" * 32 not in str(captured.value)
+    message = str(captured.value)
+    assert message.startswith("ATOM network exchange failed (")
+    assert "127.0.0.1" not in message
 
 
 @pytest.mark.parametrize(
     "resolved_address",
     ["8.8.8.8", "192.0.2.1", "198.18.0.1", "255.255.255.255", "0.0.0.0"],
 )
-def test_public_or_special_dns_resolution_is_rejected_before_sending_token(
+def test_public_or_special_dns_resolution_is_rejected_before_network_access(
     monkeypatch: pytest.MonkeyPatch,
     resolved_address: str,
 ) -> None:

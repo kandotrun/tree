@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,29 +26,27 @@ def test_dashboard_is_mobile_first_and_has_substantive_device_controls() -> None
     assert 'id="water-button"' in source
     assert 'id="stop-button"' in source
     assert 'id="water-dialog"' in source
+    assert '<div class="presets" role="group" aria-label="給水時間プリセット">' in source
 
 
-def test_dashboard_keeps_token_session_only_and_calibration_nonsecret() -> None:
+def test_dashboard_has_no_auth_gate_or_credential_storage() -> None:
     source = dashboard_source()
 
-    assert 'type="password"' in source
-    assert "sessionStorage.setItem(TOKEN_KEY" in source
-    assert "sessionStorage.getItem(TOKEN_KEY" in source
+    assert 'id="dashboard-main"' in source
+    assert 'id="dashboard-main" inert' not in source
     assert "localStorage.setItem(CALIBRATION_KEY" in source
     assert "localStorage.getItem(CALIBRATION_KEY" in source
-    assert not re.search(r"API_TOKEN|CHANGE_ME_TO_AT_LEAST", source)
-
-
-def test_auth_gate_locks_background_scrolling_until_authorized() -> None:
-    source = dashboard_source()
-
-    assert '<body class="auth-locked">' in source
-    assert 'id="dashboard-main" inert' in source
-    assert 'document.body.classList.remove("auth-locked")' in source
-    assert 'document.body.classList.add("auth-locked")' in source
-    assert '$("dashboard-main").inert = false' in source
-    assert '$("dashboard-main").inert = true' in source
-    assert 'placeholder="32文字以上のAPIトークン"' in source
+    for forbidden in (
+        "API_TOKEN",
+        "TOKEN_KEY",
+        "api-token",
+        "auth-gate",
+        "auth-locked",
+        "sessionStorage",
+        "Authorization",
+        "Bearer",
+    ):
+        assert forbidden not in source
 
 
 def test_dashboard_uses_bounded_non_retrying_api_requests() -> None:
@@ -134,18 +131,19 @@ def test_emergency_stop_stays_available_when_status_refresh_fails() -> None:
     source = dashboard_source()
 
     assert '$("water-button").disabled = true' in source
-    assert '$("stop-button").disabled = !state.token' in source
+    assert '$("stop-button").disabled = false' in source
     assert "holdButton.disabled = !isHoldEngaged()" in source
     assert 'setConnection("error", "応答なし", false)' in source
     assert '$("armed-state").textContent = "状態不明"' in source
+    assert '$("offline-banner").classList.remove("show")' in source
 
 
 def test_status_refresh_rejects_non_object_json_before_state_update() -> None:
     source = dashboard_source()
     accept_start = source.find("function acceptStatus(payload)")
-    unlock_start = source.find("function unlockDashboard()")
-    assert 0 <= accept_start < unlock_start
-    accept_status = source[accept_start:unlock_start]
+    error_handler_start = source.find("function handleStatusError(error)")
+    assert 0 <= accept_start < error_handler_start
+    accept_status = source[accept_start:error_handler_start]
 
     assert 'if (!payload || typeof payload !== "object")' in accept_status
     assert 'throw new Error("invalid_status_payload")' in accept_status
@@ -261,13 +259,12 @@ def test_dashboard_tucks_occasional_calibration_behind_details() -> None:
     assert 'id="reset-calibration"' in source
 
 
-def test_dashboard_enforces_firmware_token_bounds_before_submit() -> None:
+def test_dashboard_starts_status_polling_without_credentials() -> None:
     source = dashboard_source()
 
-    token_input = re.search(r'<input[^>]+id="api-token"[^>]*>', source)
-    assert token_input is not None
-    assert 'minlength="32"' in token_input.group(0)
-    assert 'maxlength="256"' in token_input.group(0)
+    assert "if (!state.token) return" not in source
+    assert "if (!state.token || holdButton.disabled" not in source
+    assert "setDuration(10);\n    refreshStatus();\n    setInterval(refreshStatus, 2000);" in source
     assert 'durationNumber.addEventListener("input"' in source
     assert "state.maxDurationSec !== boundedMaxDuration" in source
 
