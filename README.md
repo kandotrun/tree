@@ -92,7 +92,7 @@ See [the development guide](docs/development-guide.md) before connecting U101.
 
 ### Embedded dashboard
 
-After flashing firmware v0.3 or later, open the ATOM Lite's LAN address in a
+After flashing firmware v0.4.1 or later, open the ATOM Lite's LAN address in a
 browser. The device serves a mobile-first dashboard with live ADC history,
 browser-local dry/wet calibration, bounded 1-180 second manual watering,
 dead-man press-and-hold watering for up to ten minutes, confirmation, and
@@ -140,7 +140,9 @@ codes, and the optional systemd timer.
   bounded one-shot watering, dead-man hold lease expiry, keepalive, manual stop,
   and local pump-off behavior. The v0.4 dashboard is automated-test, browser,
   and on-device asset verified. v0.4.1 removes application authentication
-  without changing the physical safety paths.
+  without changing the physical safety paths. Its no-auth behavior is not
+  treated as physically verified until each flashed device returns status and
+  dashboard responses without credentials while reporting the pump off.
 - Measured flow, waterproofing, power endurance, drainage, siphon behavior, and
   the supervised pilot remain incomplete.
 - Automatic scheduling remains disabled by default.

@@ -5,6 +5,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = ROOT / "firmware" / "src" / "main.cpp"
 CONFIG_EXAMPLE = ROOT / "firmware" / "include" / "config.example.h"
+FORBIDDEN_AUTH_MARKERS = (
+    "401",
+    "API_TOKEN",
+    "Authorization",
+    "Bearer",
+    "X-API-Key",
+    "X-Auth-Token",
+    "authenticate",
+    "authorized",
+    "collectHeaders",
+    "hasHeader",
+    "unauthorized",
+)
 
 
 def _handler_source(source: str, name: str, next_name: str) -> str:
@@ -17,12 +30,9 @@ def test_http_api_has_no_application_authentication() -> None:
     source = MAIN.read_text(encoding="utf-8")
     config = CONFIG_EXAMPLE.read_text(encoding="utf-8")
 
-    assert "Authorization" not in source
-    assert "require_authorization" not in source
-    assert "bool authorized()" not in source
-    assert "API_TOKEN" not in source
-    assert "server.collectHeaders" not in source
-    assert "API_TOKEN" not in config
+    for marker in FORBIDDEN_AUTH_MARKERS:
+        assert marker not in source
+        assert marker not in config
 
     handlers = (
         ("handle_status", "handle_water"),
@@ -32,7 +42,9 @@ def test_http_api_has_no_application_authentication() -> None:
         ("handle_stop", "configure_http_server"),
     )
     for name, next_name in handlers:
-        assert "unauthorized" not in _handler_source(source, name, next_name)
+        handler = _handler_source(source, name, next_name)
+        for marker in FORBIDDEN_AUTH_MARKERS:
+            assert marker not in handler
 
 
 def test_independent_pump_timer_uses_the_accepted_request_duration() -> None:

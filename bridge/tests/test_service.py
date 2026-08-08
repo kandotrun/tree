@@ -226,6 +226,19 @@ def test_invalid_request_is_definitive_and_does_not_decrement_tank(tmp_path: Pat
     assert store.tank_remaining_ml() == 18_000
 
 
+def test_unexpected_401_is_unknown_and_does_not_decrement_tank(tmp_path: Path) -> None:
+    client = FakeAtomClient()
+    client.water_result = AtomHTTPError(401, {"error": "unexpected_response"})
+    service, store, _, _ = make_service(tmp_path, client=client)
+
+    result = service.water()
+
+    assert result["result"] == "UNKNOWN"
+    assert result["http_status"] == 401
+    assert store.get_event("request-1").result == "UNKNOWN"
+    assert store.tank_remaining_ml() == 18_000
+
+
 @pytest.mark.parametrize(
     ("status", "code"),
     [(409, "busy"), (409, "duplicate_request_id"), (429, "cooldown")],

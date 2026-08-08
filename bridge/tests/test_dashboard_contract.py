@@ -264,7 +264,12 @@ def test_dashboard_starts_status_polling_without_credentials() -> None:
 
     assert "if (!state.token) return" not in source
     assert "if (!state.token || holdButton.disabled" not in source
-    assert "setDuration(10);\n    refreshStatus();\n    setInterval(refreshStatus, 2000);" in source
+    assert (
+        "setDuration(10);\n"
+        "    disableActions();\n"
+        "    refreshStatus();\n"
+        "    setInterval(refreshStatus, 2000);"
+    ) in source
     assert 'durationNumber.addEventListener("input"' in source
     assert "state.maxDurationSec !== boundedMaxDuration" in source
 

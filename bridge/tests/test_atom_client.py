@@ -274,11 +274,19 @@ def test_public_or_special_dns_resolution_is_rejected_before_network_access(
     monkeypatch: pytest.MonkeyPatch,
     resolved_address: str,
 ) -> None:
+    network_calls: list[tuple[object, ...]] = []
+
     def unsafe_resolution(*_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (resolved_address, 80))]
 
+    def unexpected_connection(*args: object, **_kwargs: object) -> None:
+        network_calls.append(args)
+        raise AssertionError("network access must not occur for a rejected address")
+
     monkeypatch.setattr(socket, "getaddrinfo", unsafe_resolution)
+    monkeypatch.setattr(socket, "create_connection", unexpected_connection)
     client = make_client("http://watering-host")
 
     with pytest.raises(AtomProtocolError, match="private or local"):
         client.status()
+    assert network_calls == []
