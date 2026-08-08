@@ -123,6 +123,13 @@ def test_emergency_stop_stays_available_when_status_refresh_fails() -> None:
     assert expected in source
 
 
+def test_emergency_stop_requires_an_explicit_stop_acknowledgement() -> None:
+    source = dashboard_source()
+
+    assert "payload.stopped !== true" in source
+    assert "invalid_stop_acknowledgement" in source
+
+
 def test_embedded_dashboard_header_is_deterministic_and_current() -> None:
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--check"],

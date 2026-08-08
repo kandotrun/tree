@@ -330,7 +330,9 @@ Authorization: Bearer <API_TOKEN>
 `duration_sec`は省略可能な整数で、1-180秒かつ`MAX_RUN_MS`以内だけを受け付ける。
 省略時は`DOSE_MS`を使う。`duration_ms`、小数、0、負数、上限超過、水量は拒否する。
 要求値に関係なく、独立one-shotタイマーと180秒絶対上限を解除できない。
-Bridge/Hermesはこの値を送らず、管理画面の確認付き手動操作だけが指定する。
+低レベルの`AtomClient.water(duration_sec=...)`はファームウェアAPIをそのまま
+表現するため指定を受け付けるが、出荷するBridge service/CLIとHermesコマンドは
+この引数を公開・送信しない。現在のユーザー向け指定経路は管理画面の確認付き手動操作だけである。
 
 成功時:
 

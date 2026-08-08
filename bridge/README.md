@@ -52,8 +52,10 @@ sudoedit /etc/balcony-watering.env
 
 `ATOM_URL` must be an `http://` origin on a private/local address. Set
 `DOSE_ML` only after flow calibration; it is an estimate for tank accounting,
-not a pump duration. The bridge omits `duration_sec`, so firmware uses `DOSE_MS`
-for every bridge-triggered dose.
+not a pump duration. The low-level `AtomClient.water()` mirrors the firmware API
+and accepts an optional bounded `duration_sec`, but the shipped bridge service,
+CLI, and Hermes commands do not expose or send it. Firmware therefore uses
+`DOSE_MS` for every bridge-triggered dose.
 Because the initial ATOM firmware does not terminate TLS, use a trusted
 WPA2/WPA3 LAN with no guest clients and never expose the API through public
 ingress. Rotate the shared token if the LAN credentials may be compromised.
