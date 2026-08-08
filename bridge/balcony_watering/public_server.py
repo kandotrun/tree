@@ -5,6 +5,7 @@ import logging
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
+from threading import BoundedSemaphore
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -12,6 +13,8 @@ from .public_gateway import GatewayReply, PublicGateway
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_REQUEST_BYTES = 1_024
+_DEFAULT_REQUEST_TIMEOUT_SEC = 5.0
+_DEFAULT_MAX_ACTIVE_REQUESTS = 32
 _SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "Content-Security-Policy": (
@@ -38,6 +41,20 @@ _ASSET_NAMES = {
 }
 
 
+def _server_busy_response() -> bytes:
+    payload = b'{"error":"server_busy"}'
+    headers = {
+        "Connection": "close",
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": str(len(payload)),
+        **_SECURITY_HEADERS,
+    }
+    head = "HTTP/1.1 503 Service Unavailable\r\n" + "".join(
+        f"{name}: {value}\r\n" for name, value in headers.items()
+    )
+    return head.encode("ascii") + b"\r\n" + payload
+
+
 class PublicHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -49,17 +66,57 @@ class PublicHTTPServer(ThreadingHTTPServer):
         gateway: PublicGateway,
         public_origin: str,
         assets: dict[str, bytes],
+        request_timeout_sec: float,
+        max_active_requests: int,
     ) -> None:
+        if request_timeout_sec <= 0:
+            raise ValueError("request_timeout_sec must be positive")
+        if max_active_requests < 1:
+            raise ValueError("max_active_requests must be positive")
         self.gateway = gateway
         self.public_origin = public_origin
         self.assets = assets
+        self.request_timeout_sec = request_timeout_sec
+        self._request_slots = BoundedSemaphore(max_active_requests)
         super().__init__(server_address, handler)
+
+    def get_request(self) -> tuple[socket.socket, Any]:
+        request, client_address = super().get_request()
+        request.settimeout(self.request_timeout_sec)
+        return request, client_address
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.sendall(_server_busy_response())
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 class PublicRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "tree-public-gateway"
     sys_version = ""
+
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except ConnectionError:
+            self.close_connection = True
 
     @property
     def public_server(self) -> PublicHTTPServer:
@@ -150,7 +207,10 @@ class PublicRequestHandler(BaseHTTPRequestHandler):
             return False, "invalid_request_body", 400
         if content_length > _MAX_REQUEST_BYTES:
             return False, "request_body_too_large", 413
-        raw = self.rfile.read(content_length)
+        try:
+            raw = self.rfile.read(content_length)
+        except TimeoutError:
+            return False, "request_timeout", 408
         try:
             body = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -204,6 +264,8 @@ def create_server(
     *,
     gateway: PublicGateway,
     public_origin: str,
+    request_timeout_sec: float = _DEFAULT_REQUEST_TIMEOUT_SEC,
+    max_active_requests: int = _DEFAULT_MAX_ACTIVE_REQUESTS,
 ) -> PublicHTTPServer:
     host, _ = address
     server_class = PublicHTTPServer
@@ -219,4 +281,6 @@ def create_server(
         gateway=gateway,
         public_origin=public_origin,
         assets=_load_assets(),
+        request_timeout_sec=request_timeout_sec,
+        max_active_requests=max_active_requests,
     )

@@ -5,6 +5,7 @@ const state = {
   stopPending: false,
   stopRecommended: false,
 };
+let refreshGeneration = 0;
 
 const elements = {
   body: document.body,
@@ -95,10 +96,12 @@ function renderOffline() {
 }
 
 async function refresh() {
+  const generation = ++refreshGeneration;
   try {
-    renderStatus(await fetchStatus());
+    const status = await fetchStatus();
+    if (generation === refreshGeneration) renderStatus(status);
   } catch {
-    renderOffline();
+    if (generation === refreshGeneration) renderOffline();
   }
 }
 

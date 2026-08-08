@@ -74,13 +74,17 @@ class PublicGateway:
         if not isinstance(state, str) or type(pump) is not bool or type(armed) is not bool:
             return GatewayReply(503, {"online": False, "error": "device_unavailable"})
 
+        remaining_ms = status.get("remaining_ms", 0)
+        if type(remaining_ms) is not int or remaining_ms < 0:
+            return GatewayReply(503, {"online": False, "error": "device_unavailable"})
+
         usage = self.store.usage(now_ms=self._now_ms(), limits=self._limits)
         body: dict[str, Any] = {
             "online": True,
             "state": state,
             "pump": pump,
             "armed": armed,
-            "remaining_sec": (int(status.get("remaining_ms", 0)) + 999) // 1_000,
+            "remaining_sec": (remaining_ms + 999) // 1_000,
             "public_duration_sec": self._limits.duration_sec,
             "hourly_used": usage.hourly_used,
             "hourly_limit": self._limits.hourly_limit,

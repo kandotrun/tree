@@ -14,7 +14,7 @@ ATOM Liteを自宅LAN内の専用給水デバイスとして動かし、常時�
 flowchart LR
     W[公開Web利用者] -->|HTTPS| C[Cloudflare Tunnel]
     C --> M[自宅NAS public gateway]
-    H[Hermes Agent] -->|SSHなど| M[自宅NAS]
+    H[Hermes Agent] -->|SSHなど| M
     M -->|LAN内HTTP| A[ATOM Lite]
     A -->|Grove GPIO| U[Unit Watering U101]
     U --> P[鉢の木]

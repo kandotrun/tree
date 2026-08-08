@@ -102,7 +102,7 @@ def http_json(
         if encoded is None
         else {
             "Content-Type": "application/json",
-            "Origin": "https://tree.2-38.com",
+            "Origin": "https://tree.example.com",
         }
     )
     connection.request(method, path, body=encoded, headers=headers)
@@ -122,7 +122,7 @@ def test_public_gateway_runs_as_a_real_process_and_forwards_fixed_duration(
             {
                 "ATOM_URL": atom_url,
                 "PUBLIC_DATABASE_PATH": str(tmp_path / "public.db"),
-                "PUBLIC_ORIGIN": "https://tree.2-38.com",
+                "PUBLIC_ORIGIN": "https://tree.example.com",
                 "PUBLIC_LISTEN_HOST": "127.0.0.1",
                 "PUBLIC_LISTEN_PORT": str(port),
                 "PYTHONUNBUFFERED": "1",

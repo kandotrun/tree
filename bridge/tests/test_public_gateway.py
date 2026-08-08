@@ -71,6 +71,18 @@ def make_gateway(
     )
 
 
+def test_status_rejects_invalid_remaining_time(tmp_path: Path) -> None:
+    for index, invalid in enumerate((None, "1000", -1, True)):
+        atom = FakeAtom()
+        atom.status_payload["remaining_ms"] = invalid
+        gateway = make_gateway(tmp_path / str(index), atom)
+
+        reply = gateway.status()
+
+        assert reply.status_code == 503
+        assert reply.body == {"online": False, "error": "device_unavailable"}
+
+
 def test_status_exposes_only_public_safe_device_fields(tmp_path: Path) -> None:
     atom = FakeAtom()
     gateway = make_gateway(tmp_path, atom)

@@ -61,7 +61,7 @@ balcony-watering/
     └── serial-monitor.sh
 ```
 
-初期実装では単一リポジトリとする。ハードウェア仕様、ファームウェア、ミニPC側実装を同じ履歴で管理できるためである。
+初期実装では単一リポジトリとする。ハードウェア仕様、ファームウェア、NAS側実装を同じ履歴で管理できるためである。
 
 ## 3. ハードウェア接続
 
@@ -224,7 +224,7 @@ bridge/*.db
 - LEDとシリアルログ
 - ウォッチドッグ
 
-スケジュール、推定タンク残量、Hermes向け文章生成はミニPC側へ置く。
+スケジュール、推定タンク残量、Hermes向け文章生成はNAS側へ置く。
 
 ## 8. 起動処理
 
@@ -583,7 +583,7 @@ flow_ml_s:      ____ mL/s
 管理画面の手動給水は再書き込みなしで秒数を変更できる。
 Bridge/Hermesが使う標準1回分を変える場合だけ`DOSE_MS`を更新し、再ビルド・再書き込みする。
 
-## 16. ミニPC側の責務
+## 16. NAS側の責務
 
 NAS側は次を担当する。
 
@@ -599,7 +599,7 @@ NAS側は次を担当する。
 - 匿名公開UI、固定10秒、global cooldown、rolling quota
 - Cloudflare Tunnelのloopback ingress
 
-## 17. ミニPC設定
+## 17. NAS設定
 
 ### 17.1 CLI設置先
 
@@ -647,7 +647,7 @@ water-tree-schedule  定期実行の要否を判断し、必要な場合だけ�
 
 Hermesには原則として`water-tree`、`water-tree-status`、`water-tree-stop`だけを公開する。
 
-## 18. ミニPCの給水処理
+## 18. NASの給水処理
 
 ```text
 1. ローカルDBから未確定の直前実行を確認
@@ -744,11 +744,11 @@ SQLiteを使い、最低限次を保持する。
 
 ## 21. Hermes Agent連携
 
-Hermesから自宅ミニPCへ接続できる既存経路を利用する。ATOMへ直接接続させない。
+Hermesから自宅NASへ接続できる既存経路を利用する。ATOMへ直接接続させない。
 
 ### ツール契約
 
-| Hermes上の操作 | ミニPCで実行する固定コマンド |
+| Hermes上の操作 | NASで実行する固定コマンド |
 |---|---|
 | 木へ水をあげる | `/opt/balcony-watering/venv/bin/water-tree` |
 | 状態を確認する | `/opt/balcony-watering/venv/bin/water-tree-status` |
@@ -763,13 +763,13 @@ Hermesへ次の制約を与える。
 - `UNKNOWN`では目視確認を依頼する
 - 旧版または任意設定のクールダウン拒否を成功扱いにしない
 
-HermesがMacBook上でコマンドを実行できない場合でも問題ない。MacBookはファームウェア書き込みにだけ使い、通常運用はHermesから自宅ミニPCを経由する。
+HermesがMacBook上でコマンドを実行できない場合でも問題ない。MacBookはファームウェア書き込みにだけ使い、通常運用はHermesから自宅NASを経由する。
 
 ## 22. 定期実行
 
 最初は無効にする。流量校正、72時間電源試験、2週間の目視運用後に有効化する。
 
-ミニPCでは毎朝1回スケジュール判定を実行し、前回成功から72時間以上経過した場合だけ給水する。これにより、手動給水後の二重給水を避けられる。
+NASでは毎朝1回スケジュール判定を実行し、前回成功から72時間以上経過した場合だけ給水する。これにより、手動給水後の二重給水を避けられる。
 
 `balcony-watering-daily.timer`の例:
 
@@ -815,7 +815,7 @@ WantedBy=timers.target
 
 Wi-Fiパスワードは出力しない。
 
-### ミニPC
+### NAS
 
 - 全給水要求と結果をSQLiteへ保存
 - 5-15分間隔で`/healthz`を確認可能にする
@@ -858,7 +858,7 @@ ATOMを信頼済みLANへ限定し、外部HTTPSはCloudflare TunnelからNAS ga
 | FW-11 | Wi-Fi再接続 | pump状態を変更せず再接続 |
 | FW-12 | 電源再投入 | pump OFF、BOOT_GUARD |
 
-### ミニPC
+### NAS
 
 | ID | テスト | 期待結果 |
 |---|---|---|
@@ -1012,7 +1012,7 @@ ATOMを信頼済みLANへ限定し、外部HTTPSはCloudflare TunnelからNAS ga
 次をすべて満たした時点で初期開発を完了とする。
 
 - Hermesの明示的な依頼から木へ標準1回分を給水できる
-- HermesやミニPCとの通信断でもポンプが予定時間で停止する
+- HermesやNASとの通信断でもポンプが予定時間で停止する
 - 重複依頼による二重給水が起きない
 - 緊急停止が機能する
 - 実測した給水量が目標の10%以内に収まる

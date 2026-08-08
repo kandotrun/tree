@@ -67,7 +67,9 @@ python3 -m zipfile -e "$1" "$release/app"
 )
 ln -sfn "$release" "$base/current.next"
 mv -Tf "$base/current.next" "$base/current"
-install -m 600 bridge/public.example.env "$base/shared/public.env"
+# 初回だけplaceholderを配置し、既存の本番設定は保持する。
+test -f "$base/shared/public.env" ||
+  install -m 600 bridge/public.example.env "$base/shared/public.env"
 ```
 
 wheelは信頼するローカルbuildまたはCI artifactだけを使用し、依存packageやbinary extensionを追加した場合はこの展開方式を再評価します。

@@ -13,7 +13,7 @@ from balcony_watering.config import (
 BASE_ENV = {
     "ATOM_URL": "http://192.168.50.50",
     "PUBLIC_DATABASE_PATH": "/tmp/tree-public.db",
-    "PUBLIC_ORIGIN": "https://tree.2-38.com",
+    "PUBLIC_ORIGIN": "https://tree.example.com",
 }
 
 
@@ -24,7 +24,7 @@ def test_public_settings_have_safe_anonymous_gateway_defaults() -> None:
     assert settings.database_path == Path("/tmp/tree-public.db")
     assert settings.listen_host == "127.0.0.1"
     assert settings.listen_port == 8787
-    assert settings.public_origin == "https://tree.2-38.com"
+    assert settings.public_origin == "https://tree.example.com"
     assert settings.duration_sec == 10
     assert settings.cooldown_sec == 60
     assert settings.hourly_limit == 6
@@ -41,9 +41,9 @@ def test_public_settings_have_safe_anonymous_gateway_defaults() -> None:
         ("PUBLIC_LISTEN_HOST", "0.0.0.0", "loopback"),
         ("PUBLIC_LISTEN_PORT", "0", "from 1 through 65535"),
         ("PUBLIC_LISTEN_PORT", "65536", "from 1 through 65535"),
-        ("PUBLIC_ORIGIN", "http://tree.2-38.com", "HTTPS origin"),
-        ("PUBLIC_ORIGIN", "https://user:pass@tree.2-38.com", "credentials"),
-        ("PUBLIC_ORIGIN", "https://tree.2-38.com/path", "origin only"),
+        ("PUBLIC_ORIGIN", "http://tree.example.com", "HTTPS origin"),
+        ("PUBLIC_ORIGIN", "https://user:pass@tree.example.com", "credentials"),
+        ("PUBLIC_ORIGIN", "https://tree.example.com/path", "origin only"),
         ("PUBLIC_WATER_DURATION_SEC", "9", "from 10 through 10"),
         ("PUBLIC_WATER_DURATION_SEC", "11", "from 10 through 10"),
         ("PUBLIC_COOLDOWN_SEC", "59", "from 60 through 3600"),
@@ -80,6 +80,23 @@ def test_public_settings_allow_only_tighter_operational_limits() -> None:
     assert settings.daily_limit == 12
 
 
+def test_load_public_settings_uses_user_gateway_path_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    env_file = tmp_path / "apps" / "balcony-watering" / "shared" / "public.env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
+        "\n".join(f"{key}={value}" for key, value in BASE_ENV.items()),
+        encoding="utf-8",
+    )
+
+    settings = load_public_settings(environ={})
+
+    assert settings.atom_url == BASE_ENV["ATOM_URL"]
+    assert settings.database_path == Path(BASE_ENV["PUBLIC_DATABASE_PATH"])
+
+
 def test_load_public_settings_uses_environment_over_file(tmp_path: Path) -> None:
     env_file = tmp_path / "public.env"
     env_file.write_text(
@@ -87,7 +104,7 @@ def test_load_public_settings_uses_environment_over_file(tmp_path: Path) -> None
             [
                 "ATOM_URL=http://192.168.1.10",
                 "PUBLIC_DATABASE_PATH=/tmp/from-file.db",
-                "PUBLIC_ORIGIN=https://tree.2-38.com",
+                "PUBLIC_ORIGIN=https://tree.example.com",
                 "PUBLIC_WATER_DURATION_SEC=9",
             ]
         ),

@@ -303,7 +303,8 @@ def load_public_settings(
     source = os.environ if environ is None else environ
     selected_path = env_file
     if selected_path is None:
-        selected_path = Path(source.get("PUBLIC_ENV_FILE", "/etc/tree-public.env"))
+        default_path = Path.home() / "apps" / "balcony-watering" / "shared" / "public.env"
+        selected_path = Path(source.get("PUBLIC_ENV_FILE", default_path)).expanduser()
     values = _read_env_file(selected_path)
     values.update(source)
     return PublicSettings.from_mapping(values)

@@ -3,9 +3,11 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
+from types import TracebackType
 
 import pytest
 
+import balcony_watering.public_state as state_module
 from balcony_watering.public_state import PublicActionStore, PublicLimits
 
 
@@ -151,6 +153,50 @@ def test_usage_reports_the_longest_active_blocker(tmp_path: Path) -> None:
     assert usage.daily_used == 2
     assert usage.reason == "daily_limit"
     assert usage.retry_after_sec > 0
+
+
+def test_store_closes_every_sqlite_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_connect = state_module.sqlite3.connect
+
+    class TrackingConnection:
+        def __init__(self, database: str | Path, timeout: float) -> None:
+            self.connection = real_connect(database, timeout=timeout)
+            self.closed = False
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.connection, name)
+
+        def __enter__(self) -> TrackingConnection:
+            self.connection.__enter__()
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> bool | None:
+            return self.connection.__exit__(exc_type, exc, traceback)
+
+        def close(self) -> None:
+            self.closed = True
+            self.connection.close()
+
+    opened: list[TrackingConnection] = []
+
+    def tracking_connect(database: str | Path, timeout: float = 5.0) -> TrackingConnection:
+        connection = TrackingConnection(database, timeout)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(state_module.sqlite3, "connect", tracking_connect)
+    store = PublicActionStore(tmp_path / "public.db")
+    store.usage(now_ms=1_000, limits=limits())
+
+    assert opened
+    assert all(connection.closed for connection in opened)
 
 
 def test_limits_reject_a_weaker_public_safety_policy() -> None:

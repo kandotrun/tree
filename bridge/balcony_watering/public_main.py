@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import secrets
-import sys
 import time
 
 from .atom_client import AtomClient
@@ -10,6 +9,8 @@ from .config import ConfigError, load_public_settings
 from .public_gateway import PublicGateway
 from .public_server import create_server
 from .public_state import PublicActionStore, PublicLimits
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def build_gateway() -> tuple[PublicGateway, str, int, str]:
@@ -43,15 +44,19 @@ def main() -> int:
     try:
         gateway, host, port, public_origin = build_gateway()
     except ConfigError as exc:
-        print(f"configuration error: {exc}", file=sys.stderr)
+        _LOGGER.error("configuration error: %s", exc)
         return 2
 
-    server = create_server(
-        (host, port),
-        gateway=gateway,
-        public_origin=public_origin,
-    )
-    logging.getLogger(__name__).info("public gateway listening on loopback port %d", port)
+    try:
+        server = create_server(
+            (host, port),
+            gateway=gateway,
+            public_origin=public_origin,
+        )
+    except OSError as exc:
+        _LOGGER.error("cannot bind loopback port %d: %s", port, exc)
+        return 3
+    _LOGGER.info("public gateway listening on loopback port %d", port)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

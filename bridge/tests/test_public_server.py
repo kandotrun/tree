@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import socket
+import struct
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.client import HTTPConnection, HTTPResponse
 from typing import Any
+
+import pytest
 
 from balcony_watering.public_gateway import GatewayReply
 from balcony_watering.public_server import create_server
@@ -54,11 +59,18 @@ class FakeGateway:
 
 
 @contextmanager
-def running_server(gateway: Any) -> Iterator[tuple[str, int]]:
+def running_server(
+    gateway: Any,
+    *,
+    request_timeout_sec: float = 5.0,
+    max_active_requests: int = 32,
+) -> Iterator[tuple[str, int]]:
     server = create_server(
         ("127.0.0.1", 0),
         gateway=gateway,
-        public_origin="https://tree.2-38.com",
+        public_origin="https://tree.example.com",
+        request_timeout_sec=request_timeout_sec,
+        max_active_requests=max_active_requests,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -92,7 +104,7 @@ def json_request(
     path: str,
     body: dict[str, object],
     *,
-    origin: str | None = "https://tree.2-38.com",
+    origin: str | None = "https://tree.example.com",
 ) -> tuple[HTTPResponse, dict[str, Any]]:
     encoded = json.dumps(body).encode()
     headers = {"Content-Type": "application/json"}
@@ -231,6 +243,105 @@ def test_health_does_not_depend_on_device_and_unknown_routes_are_json() -> None:
     assert missing.status == 404
     assert json.loads(missing_body) == {"error": "not_found"}
     assert gateway.status_calls == 0
+
+
+def test_partial_request_body_times_out_and_server_recovers() -> None:
+    gateway = FakeGateway()
+    with running_server(gateway, request_timeout_sec=0.1) as address:
+        client = socket.create_connection(address, timeout=2)
+        client.settimeout(2)
+        client.sendall(
+            b"POST /api/water HTTP/1.1\r\n"
+            b"Host: tree.example.com\r\n"
+            b"Origin: https://tree.example.com\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 2\r\n"
+            b"Connection: close\r\n\r\n"
+            b"{"
+        )
+        timed_out = HTTPResponse(client)
+        timed_out.begin()
+        timeout_payload = json.loads(timed_out.read())
+        client.close()
+
+        recovered, recovered_payload = request(address, "GET", "/api/status")
+
+    assert timed_out.status == 408
+    assert timeout_payload == {"error": "request_timeout"}
+    assert recovered.status == 200
+    assert json.loads(recovered_payload)["state"] == "IDLE"
+    assert gateway.water_calls == 0
+
+
+def test_client_reset_during_request_body_is_silent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gateway = FakeGateway()
+    with running_server(
+        gateway,
+        request_timeout_sec=0.1,
+        max_active_requests=1,
+    ) as address:
+        client = socket.create_connection(address, timeout=2)
+        client.sendall(
+            b"POST /api/water HTTP/1.1\r\n"
+            b"Host: tree.example.com\r\n"
+            b"Origin: https://tree.example.com\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 2\r\n"
+            b"Connection: close\r\n\r\n"
+            b"{"
+        )
+        client.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_LINGER,
+            struct.pack("ii", 1, 0),
+        )
+        client.close()
+
+        deadline = time.monotonic() + 2
+        while True:
+            recovered, _ = request(address, "GET", "/api/status")
+            if recovered.status == 200:
+                break
+            assert recovered.status == 503
+            if time.monotonic() >= deadline:
+                pytest.fail("request slot was not released after client reset")
+            time.sleep(0.01)
+
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "ConnectionResetError" not in captured.err
+    assert gateway.water_calls == 0
+
+
+def test_concurrency_limit_rejects_excess_handlers() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingGateway(FakeGateway):
+        def status(self) -> GatewayReply:
+            entered.set()
+            assert release.wait(timeout=2)
+            return super().status()
+
+    gateway = BlockingGateway()
+    first_result: list[tuple[HTTPResponse, bytes]] = []
+    with running_server(gateway, max_active_requests=1) as address:
+        first = threading.Thread(
+            target=lambda: first_result.append(request(address, "GET", "/api/status"))
+        )
+        first.start()
+        assert entered.wait(timeout=1)
+        try:
+            overloaded, overloaded_payload = request(address, "GET", "/api/status")
+        finally:
+            release.set()
+            first.join(timeout=2)
+
+    assert overloaded.status == 503
+    assert json.loads(overloaded_payload) == {"error": "server_busy"}
+    assert first_result[0][0].status == 200
 
 
 def test_handler_hides_unexpected_internal_error_details() -> None:
