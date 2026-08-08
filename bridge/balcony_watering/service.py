@@ -62,6 +62,10 @@ class WateringService:
         return remaining_ml < self.settings.low_tank_doses * self.settings.dose_ml
 
     @staticmethod
+    def _optional_integer(value: object) -> int | None:
+        return value if type(value) is int else None
+
+    @staticmethod
     def _unknown_previous(event: WateringEvent) -> dict[str, Any]:
         return {
             "ok": False,
@@ -86,62 +90,48 @@ class WateringService:
             health = self.client.health()
             if health.get("ok") is not True:
                 return None
-            status = self.client.status()
+            return self.client.status()
         except AtomError:
             return None
-        return status
 
-    def water(self) -> dict[str, Any]:
-        return self._water()
-
-    def _water(self, *, schedule_success_cutoff: str | None = None) -> dict[str, Any]:
-        unresolved = self.store.unresolved_event()
-        if unresolved is not None:
-            return self._unknown_previous(unresolved)
-
-        status = self._preflight_status()
-        if status is None:
-            return self._offline()
+    @staticmethod
+    def _preflight_rejection(status: dict[str, Any]) -> dict[str, Any] | None:
         state = status.get("state")
-        if state != "IDLE" or status.get("pump") is not False:
-            rejected_message = "".join(
-                (
-                    f"ATOM Liteが{state or '不明な状態'}のため、",
-                    "水やりは実行していません。",
-                )
-            )
-            return {
-                "ok": False,
-                "result": "REJECTED",
-                "state": state,
-                "message_ja": rejected_message,
-            }
+        if state == "IDLE" and status.get("pump") is False:
+            return None
+        return {
+            "ok": False,
+            "result": "REJECTED",
+            "state": state,
+            "message_ja": (f"ATOM Liteが{state or '不明な状態'}のため、水やりは実行していません。"),
+        }
 
-        tank_remaining = self.store.tank_remaining_ml()
-        if tank_remaining < self.settings.dose_ml:
-            empty_message = "".join(
-                (
-                    "推定タンク残量が1回分未満のため、水やりは実行していません。",
-                    "補充してください。",
-                )
-            )
-            return {
-                "ok": False,
-                "result": "TANK_EMPTY",
-                "tank_remaining_ml": tank_remaining,
-                "message_ja": empty_message,
-            }
+    def _tank_rejection(self) -> dict[str, Any] | None:
+        remaining = self.store.tank_remaining_ml()
+        if remaining >= self.settings.dose_ml:
+            return None
+        return {
+            "ok": False,
+            "result": "TANK_EMPTY",
+            "tank_remaining_ml": remaining,
+            "message_ja": (
+                "推定タンク残量が1回分未満のため、水やりは実行していません。補充してください。"
+            ),
+        }
 
-        request_id = self._request_id_factory()
-        moisture_before = status.get("moisture_adc")
-        if not isinstance(moisture_before, int) or isinstance(moisture_before, bool):
-            moisture_before = None
+    def _reserve_request(
+        self,
+        request_id: str,
+        status: dict[str, Any],
+        *,
+        schedule_success_cutoff: str | None,
+    ) -> dict[str, Any] | None:
         try:
             self.store.reserve_request(
                 request_id,
                 dose_ml=self.settings.dose_ml,
                 requested_at=_timestamp(self._now()),
-                moisture_before=moisture_before,
+                moisture_before=self._optional_integer(status.get("moisture_adc")),
                 schedule_success_cutoff=schedule_success_cutoff,
             )
         except UnresolvedRequest as exc:
@@ -155,143 +145,154 @@ class WateringService:
                 ),
             }
         except ScheduleNotDue:
-            latest_success = self.store.last_success_at()
-            return self._skipped_recent(latest_success)
+            return self._skipped_recent(self.store.last_success_at())
+        return None
 
+    def _mark_unknown(
+        self,
+        request_id: str,
+        *,
+        detail: str,
+        message_ja: str,
+        http_status: int | None = None,
+    ) -> dict[str, Any]:
+        self.store.mark_unknown(request_id, detail=detail)
+        result: dict[str, Any] = {
+            "ok": False,
+            "result": "UNKNOWN",
+            "request_id": request_id,
+            "message_ja": message_ja,
+        }
+        if http_status is not None:
+            result["http_status"] = http_status
+        return result
+
+    def _send_water_request(self, request_id: str) -> dict[str, Any] | None:
         try:
             acceptance = self.client.water(request_id)
         except AtomHTTPError as exc:
             detail = f"HTTP {exc.status}: {exc.code}"
-            definitive_rejections = {400, 401, 413, 423}
-            if exc.status in definitive_rejections:
+            if exc.status in {400, 401, 413, 423}:
                 self.store.mark_rejected(request_id, detail=detail)
-                rejection_message = "ATOM Liteが給水要求を拒否したため、水やりは実行していません。"
                 return {
                     "ok": False,
                     "result": "REJECTED",
                     "request_id": request_id,
                     "http_status": exc.status,
-                    "message_ja": rejection_message,
+                    "message_ja": ("ATOM Liteが給水要求を拒否したため、水やりは実行していません。"),
                 }
-            self.store.mark_unknown(request_id, detail=detail)
-            return {
-                "ok": False,
-                "result": "UNKNOWN",
-                "request_id": request_id,
-                "http_status": exc.status,
-                "message_ja": (
+            return self._mark_unknown(
+                request_id,
+                detail=detail,
+                http_status=exc.status,
+                message_ja=(
                     "命令後にATOM Liteの異常応答を受けたため結果は未確定です。"
                     "安全のため再実行していません。"
                 ),
-            }
+            )
         except (AtomConnectionError, AtomProtocolError):
-            self.store.mark_unknown(
+            return self._mark_unknown(
                 request_id,
                 detail="network or protocol failure after POST /v1/water",
-            )
-            return {
-                "ok": False,
-                "result": "UNKNOWN",
-                "request_id": request_id,
-                "message_ja": (
+                message_ja=(
                     "命令後に通信が切れたため結果を確定できません。安全のため再実行していません。"
                 ),
-            }
+            )
 
         if (
             acceptance.get("accepted") is not True
             or acceptance.get("request_id") != request_id
             or acceptance.get("state") != "WATERING"
         ):
-            self.store.mark_unknown(request_id, detail="invalid acceptance response")
-            return {
-                "ok": False,
-                "result": "UNKNOWN",
-                "request_id": request_id,
-                "message_ja": (
+            return self._mark_unknown(
+                request_id,
+                detail="invalid acceptance response",
+                message_ja=(
                     "ATOM Liteの受付応答を確認できないため結果は未確定です。"
                     "安全のため再実行していません。"
                 ),
-            }
+            )
 
         self.store.mark_accepted(request_id, started_at=_timestamp(self._now()))
+        return None
+
+    def _completion_result(
+        self,
+        request_id: str,
+        status: dict[str, Any],
+        *,
+        started_monotonic: float,
+    ) -> dict[str, Any] | None:
+        if not (
+            status.get("last_request_id") == request_id
+            and status.get("state") in {"COOLDOWN", "IDLE"}
+            and status.get("pump") is False
+        ):
+            return None
+
+        if status.get("last_stop_reason") != "DOSE_COMPLETE":
+            return self._mark_unknown(
+                request_id,
+                detail="watering stopped without dose completion confirmation",
+                message_ja=(
+                    "ポンプ停止は確認しましたが、標準1回分の完了を確認できません。"
+                    "安全のため残量を減算せず、再実行していません。"
+                ),
+            )
+
+        runtime_ms = self._optional_integer(status.get("last_runtime_ms"))
+        if runtime_ms is None or runtime_ms < 0:
+            runtime_ms = max(0, round((self._monotonic() - started_monotonic) * 1000))
+        remaining = self.store.complete_success(
+            request_id,
+            completed_at=_timestamp(self._now()),
+            runtime_ms=runtime_ms,
+            moisture_after=self._optional_integer(status.get("moisture_adc")),
+        )
+        message = (
+            f"水やりを完了しました。約{self.settings.dose_ml / 1000:.1f}L、"
+            f"推定残量は{remaining / 1000:.1f}Lです。"
+        )
+        result: dict[str, Any] = {
+            "ok": True,
+            "result": "SUCCESS",
+            "request_id": request_id,
+            "dose_ml": self.settings.dose_ml,
+            "runtime_ms": runtime_ms,
+            "tank_remaining_ml": remaining,
+            "message_ja": message,
+        }
+        if self._low_tank(remaining):
+            result["low_tank"] = True
+            result["message_ja"] = message + " タンクを補充してください。"
+        return result
+
+    @staticmethod
+    def _poll_detail(status: dict[str, Any], request_id: str) -> str:
+        if (
+            status.get("state") == "WATERING"
+            and status.get("last_request_id") == request_id
+            and status.get("pump") is True
+        ):
+            return "watering still active at poll timeout"
+        return "unexpected status after acceptance"
+
+    def _wait_for_completion(self, request_id: str) -> dict[str, Any]:
         started_monotonic = self._monotonic()
         deadline = started_monotonic + self.settings.status_poll_timeout_sec
         last_detail = "status poll timed out"
 
         while True:
             try:
-                current = self.client.status()
-                current_state = current.get("state")
-                current_request_id = current.get("last_request_id")
-                pump = current.get("pump")
-                if (
-                    current_request_id == request_id
-                    and current_state in {"COOLDOWN", "IDLE"}
-                    and pump is False
-                ):
-                    stop_reason = current.get("last_stop_reason")
-                    if stop_reason != "DOSE_COMPLETE":
-                        self.store.mark_unknown(
-                            request_id,
-                            detail="watering stopped without dose completion confirmation",
-                        )
-                        return {
-                            "ok": False,
-                            "result": "UNKNOWN",
-                            "request_id": request_id,
-                            "message_ja": (
-                                "ポンプ停止は確認しましたが、標準1回分の完了を確認できません。"
-                                "安全のため残量を減算せず、再実行していません。"
-                            ),
-                        }
-                    raw_runtime = current.get("last_runtime_ms")
-                    if (
-                        isinstance(raw_runtime, int)
-                        and not isinstance(raw_runtime, bool)
-                        and raw_runtime >= 0
-                    ):
-                        runtime_ms = raw_runtime
-                    else:
-                        runtime_ms = max(
-                            0,
-                            round((self._monotonic() - started_monotonic) * 1000),
-                        )
-                    moisture_after = current.get("moisture_adc")
-                    if not isinstance(moisture_after, int) or isinstance(moisture_after, bool):
-                        moisture_after = None
-                    remaining = self.store.complete_success(
-                        request_id,
-                        completed_at=_timestamp(self._now()),
-                        runtime_ms=runtime_ms,
-                        moisture_after=moisture_after,
-                    )
-                    low_tank = self._low_tank(remaining)
-                    message = (
-                        f"水やりを完了しました。約{self.settings.dose_ml / 1000:.1f}L、"
-                        f"推定残量は{remaining / 1000:.1f}Lです。"
-                    )
-                    success_result: dict[str, Any] = {
-                        "ok": True,
-                        "result": "SUCCESS",
-                        "request_id": request_id,
-                        "dose_ml": self.settings.dose_ml,
-                        "runtime_ms": runtime_ms,
-                        "tank_remaining_ml": remaining,
-                        "message_ja": message,
-                    }
-                    if low_tank:
-                        success_result["low_tank"] = True
-                        success_result["message_ja"] = message + " タンクを補充してください。"
-                    return success_result
-                if (
-                    current_state == "WATERING"
-                    and current_request_id == request_id
-                    and pump is True
-                ):
-                    last_detail = "watering still active at poll timeout"
-                else:
-                    last_detail = "unexpected status after acceptance"
+                status = self.client.status()
+                completed = self._completion_result(
+                    request_id,
+                    status,
+                    started_monotonic=started_monotonic,
+                )
+                if completed is not None:
+                    return completed
+                last_detail = self._poll_detail(status, request_id)
             except AtomHTTPError as exc:
                 last_detail = f"status HTTP {exc.status} after acceptance"
             except (AtomConnectionError, AtomProtocolError):
@@ -301,15 +302,41 @@ class WateringService:
                 break
             self._sleep(self.settings.status_poll_interval_sec)
 
-        self.store.mark_unknown(request_id, detail=last_detail)
-        return {
-            "ok": False,
-            "result": "UNKNOWN",
-            "request_id": request_id,
-            "message_ja": (
+        return self._mark_unknown(
+            request_id,
+            detail=last_detail,
+            message_ja=(
                 "命令後に完了を確認できないため結果は未確定です。安全のため再実行していません。"
             ),
-        }
+        )
+
+    def water(self) -> dict[str, Any]:
+        return self._water()
+
+    def _water(self, *, schedule_success_cutoff: str | None = None) -> dict[str, Any]:
+        unresolved = self.store.unresolved_event()
+        if unresolved is not None:
+            return self._unknown_previous(unresolved)
+
+        status = self._preflight_status()
+        if status is None:
+            return self._offline()
+        rejection = self._preflight_rejection(status) or self._tank_rejection()
+        if rejection is not None:
+            return rejection
+
+        request_id = self._request_id_factory()
+        reservation = self._reserve_request(
+            request_id,
+            status,
+            schedule_success_cutoff=schedule_success_cutoff,
+        )
+        if reservation is not None:
+            return reservation
+        request_result = self._send_water_request(request_id)
+        if request_result is not None:
+            return request_result
+        return self._wait_for_completion(request_id)
 
     def status(self) -> dict[str, Any]:
         atom_status = self._preflight_status()
@@ -334,16 +361,12 @@ class WateringService:
         try:
             response = self.client.stop()
         except AtomError:
-            offline_message = "".join(
-                (
-                    "ATOM Liteへ接続できず、停止を確認できません。",
-                    "現物を確認してください。",
-                )
-            )
             return {
                 "ok": False,
                 "result": "OFFLINE",
-                "message_ja": offline_message,
+                "message_ja": (
+                    "ATOM Liteへ接続できず、停止を確認できません。現物を確認してください。"
+                ),
             }
         if response.get("stopped") is not True:
             return {

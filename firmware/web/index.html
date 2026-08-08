@@ -3,312 +3,580 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#173f35">
+  <meta name="theme-color" content="#f2f3ef">
   <title>木の水やり</title>
   <style>
     :root {
       color-scheme: light;
-      --forest: #173f35;
-      --forest-2: #22594a;
-      --ink: #17221f;
-      --muted: #66736e;
-      --paper: #f3efe4;
-      --card: rgba(255, 253, 247, .92);
-      --line: rgba(23, 63, 53, .15);
-      --water: #19a9a0;
-      --water-pale: #bce5df;
-      --clay: #c86742;
-      --amber: #d99f37;
-      --danger: #b74435;
-      --shadow: 0 18px 50px rgba(38, 51, 46, .10);
-      font-family: "Avenir Next", Avenir, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+      --canvas: #f2f3ef;
+      --surface: #ffffff;
+      --surface-muted: #f7f8f5;
+      --ink: #18201c;
+      --muted: #68716b;
+      --line: #d9ded9;
+      --line-strong: #b9c1ba;
+      --green: #176b49;
+      --green-dark: #105039;
+      --green-soft: #e7f0ea;
+      --red: #a43f36;
+      --red-soft: #f8eae7;
+      --amber: #8a641b;
+      --amber-soft: #f6eedc;
+      --focus: #1267d6;
     }
+
     * { box-sizing: border-box; }
-    html { background: var(--paper); }
+    [hidden] { display: none !important; }
+
+    html { min-width: 320px; }
     body {
-      min-height: 100vh;
       margin: 0;
+      min-height: 100vh;
+      background: var(--canvas);
       color: var(--ink);
-      background:
-        radial-gradient(circle at 12% 8%, rgba(25, 169, 160, .13), transparent 29rem),
-        radial-gradient(circle at 91% 18%, rgba(200, 103, 66, .10), transparent 25rem),
-        var(--paper);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Noto Sans JP", sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
     }
     body.auth-locked { overflow: hidden; }
-    body::before {
+    body.auth-locked .shell { visibility: hidden; }
+    button, input { font: inherit; }
+    button { min-height: 44px; }
+    button, summary, input[type="range"] { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, input:focus-visible, summary:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+    }
+
+    .shell {
+      width: min(1080px, 100%);
+      margin: 0 auto;
+      padding: 22px 24px 48px;
+    }
+
+    .site-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 54px;
+      margin-bottom: 14px;
+    }
+    .site-title { display: flex; align-items: baseline; gap: 11px; }
+    .site-title h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+    .site-code {
+      color: var(--green-dark);
+      font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .12em;
+    }
+    .connection {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    .connection-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
+    .connection-dot.online { background: var(--green); }
+    .connection-dot.error { background: var(--red); }
+    .connection-divider { width: 1px; height: 14px; background: var(--line); }
+
+    .dashboard-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 356px;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .status-strip {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .status-item { min-width: 0; padding: 14px 16px; border-right: 1px solid var(--line); }
+    .status-item:last-child { border-right: 0; }
+    .status-label {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: .04em;
+    }
+    .status-value { display: block; overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .panel-body { padding: 22px; }
+    .panel-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+    .panel-heading h2 { margin: 0; font-size: 18px; line-height: 1.3; letter-spacing: -.015em; }
+    .panel-heading p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .state-label { color: var(--muted); font-size: 12px; font-weight: 650; white-space: nowrap; }
+
+    #control-panel {
+      grid-column: 2;
+      grid-row: 2;
+      position: sticky;
+      top: 14px;
+    }
+    .monitor-column {
+      grid-column: 1;
+      grid-row: 2;
+      display: grid;
+      gap: 14px;
+    }
+
+    .control-section + .control-section { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
+    .control-title { margin: 0 0 5px; font-size: 14px; font-weight: 700; }
+    .control-copy { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+    .duration-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+    .duration-row label { color: var(--muted); font-size: 12px; font-weight: 650; }
+    .duration-input { display: flex; align-items: baseline; gap: 5px; }
+    #duration-number {
+      width: 70px;
+      padding: 0;
+      border: 0;
+      border-bottom: 1px solid var(--line-strong);
+      border-radius: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.2;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .duration-unit { color: var(--muted); font-size: 13px; }
+    #duration-sec { width: 100%; height: 32px; margin: 2px 0 14px; accent-color: var(--green); cursor: pointer; }
+    #duration-sec::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--line); }
+    #duration-sec::-webkit-slider-thumb {
+      width: 20px;
+      height: 20px;
+      margin-top: -8px;
+      border: 2px solid var(--surface);
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 1px var(--green);
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    #duration-sec::-moz-range-track { height: 4px; border: 0; border-radius: 2px; background: var(--line); }
+    #duration-sec::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--surface);
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 1px var(--green);
+    }
+    .presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 14px; }
+    .preset {
+      min-height: 44px;
+      padding: 6px 3px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .preset:hover { border-color: var(--line-strong); color: var(--ink); }
+    .preset.active { border-color: var(--green); background: var(--green-soft); color: var(--green-dark); font-weight: 700; }
+
+    .primary-button, .hold-button, .stop-button, .secondary-button {
+      width: 100%;
+      padding: 11px 14px;
+      border-radius: 10px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .primary-button { border: 1px solid var(--green); background: var(--green); color: #fff; }
+    .primary-button:hover { border-color: var(--green-dark); background: var(--green-dark); }
+    .hold-button {
+      min-height: 58px;
+      border: 1px solid var(--ink);
+      background: var(--surface);
+      color: var(--ink);
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .hold-button:hover { background: var(--surface-muted); }
+    .hold-button.holding { border-color: var(--green); background: var(--green); color: #fff; }
+    .hold-button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    .stop-button { margin-top: 8px; border: 1px solid #dcb9b5; background: var(--surface); color: var(--red); }
+    .stop-button:not(:disabled):hover { background: var(--red-soft); }
+    .stop-button.active-stop { border-color: var(--red); background: var(--red); color: #fff; }
+    .stop-button.active-stop:hover { border-color: #842f28; background: #842f28; }
+    .primary-button:disabled, .hold-button:disabled, .stop-button:disabled { cursor: not-allowed; }
+    .primary-button:disabled, .hold-button:disabled { opacity: .45; }
+    .stop-button:disabled { opacity: .58; color: var(--muted); }
+    .control-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+
+    .moisture-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; }
+    .reading-label { display: block; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .reading-value { display: inline-block; margin-top: 2px; font-size: clamp(42px, 7vw, 68px); font-weight: 650; line-height: 1; letter-spacing: -.055em; font-variant-numeric: tabular-nums; }
+    .reading-unit { margin-left: 7px; color: var(--muted); font-size: 13px; }
+    .dryness { min-width: 112px; text-align: right; }
+    #dryness-value { display: block; font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    #dryness-label { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .moisture-track { height: 6px; margin-top: 20px; overflow: hidden; border-radius: 3px; background: var(--line); }
+    .moisture-fill { width: 0; height: 100%; background: var(--green); transition: width 180ms ease-out; }
+
+    .chart-wrap { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .chart-head { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--muted); font-size: 11px; }
+    .chart-wrap svg { display: block; width: 100%; height: 118px; }
+    #chart-line { fill: none; stroke: var(--green); stroke-width: 2; vector-effect: non-scaling-stroke; }
+
+    .calibration-panel { margin-top: 20px; border-top: 1px solid var(--line); }
+    .calibration-panel summary { display: flex; align-items: center; min-height: 44px; padding: 10px 0 0; color: var(--ink); font-size: 13px; font-weight: 700; cursor: pointer; }
+    .calibration-content { padding-top: 14px; }
+    .calibration-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .secondary-button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; }
+    .secondary-button:hover { border-color: var(--line-strong); background: var(--surface-muted); }
+    .reset-button { margin-top: 8px; color: var(--red); }
+    .calibration-copy { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+
+    .last-event { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+    .last-event strong { display: block; font-size: 13px; }
+    .last-event span { display: block; margin-top: 3px; overflow-wrap: anywhere; color: #59615c; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .device-facts { display: grid; grid-template-columns: repeat(3, 1fr); }
+    .device-fact { min-width: 0; padding: 17px 20px; border-right: 1px solid var(--line); }
+    .device-fact:last-child { border-right: 0; }
+    .device-fact span { display: block; color: var(--muted); font-size: 11px; }
+    .device-fact strong { display: block; margin-top: 2px; overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+
+    .offline-banner {
+      grid-column: 1 / -1;
+      display: none;
+      padding: 11px 14px;
+      border: 1px solid #e3c7c3;
+      border-radius: 10px;
+      background: var(--red-soft);
+      color: #7e2f28;
+      font-size: 13px;
+    }
+    .offline-banner.show { display: block; }
+
+    .auth-gate {
       position: fixed;
       inset: 0;
-      z-index: -1;
-      content: "";
-      opacity: .34;
-      background-image:
-        repeating-radial-gradient(ellipse at 13% 15%, transparent 0 37px, rgba(23,63,53,.055) 38px 39px, transparent 40px 74px);
-      pointer-events: none;
+      z-index: 100;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      overflow-y: auto;
+      background: rgba(242, 243, 239, .96);
     }
-    button, input { font: inherit; }
-    button { -webkit-tap-highlight-color: transparent; }
-    .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 56px; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .brand-mark {
-      display: grid; width: 43px; height: 43px; place-items: center; border-radius: 50% 48% 44% 52%;
-      color: #fff; background: var(--forest); box-shadow: inset -7px -8px 0 rgba(0,0,0,.08);
+    .auth-card {
+      width: min(400px, 100%);
+      padding: 28px;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: 0 20px 55px rgba(24, 32, 28, .12);
     }
-    .brand-mark svg { width: 23px; height: 23px; }
-    .eyebrow { margin: 0 0 2px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; }
-    h1 { margin: 0; font-family: "Iowan Old Style", "Hiragino Mincho ProN", serif; font-size: clamp(22px, 4vw, 30px); font-weight: 600; letter-spacing: -.02em; }
-    .connection { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-    .connection-dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa39f; box-shadow: 0 0 0 4px rgba(154,163,159,.14); }
-    .connection-dot.online { background: var(--water); box-shadow: 0 0 0 4px rgba(25,169,160,.15); }
-    .connection-dot.error { background: var(--danger); box-shadow: 0 0 0 4px rgba(183,68,53,.13); }
-    .grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .65fr); gap: 18px; align-items: start; }
-    .stack { display: grid; gap: 18px; }
-    .card { overflow: hidden; border: 1px solid var(--line); border-radius: 26px; background: var(--card); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
-    .card-inner { padding: clamp(20px, 4vw, 30px); }
-    .card-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 22px; }
-    .card-title { margin: 0; font-size: 14px; font-weight: 750; letter-spacing: .04em; }
-    .card-note { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
-    .pill { display: inline-flex; align-items: center; min-height: 28px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--forest); background: rgba(255,255,255,.55); font-size: 11px; font-weight: 700; white-space: nowrap; }
-    .moisture-layout { display: grid; grid-template-columns: 190px 1fr; gap: 30px; align-items: center; }
-    .gauge { --gauge-angle: 0deg; --gauge-progress: transparent; position: relative; width: 174px; height: 174px; margin: 0 auto; display: grid; place-items: center; }
-    .gauge::before {
-      position: absolute; inset: 0; content: ""; border-radius: 50%;
-      background: conic-gradient(from 225deg, var(--gauge-progress) 0 var(--gauge-angle), rgba(23,63,53,.10) var(--gauge-angle) 270deg, transparent 270deg 360deg);
-      -webkit-mask: radial-gradient(circle, transparent 57%, #000 58% 70%, transparent 71%);
-      mask: radial-gradient(circle, transparent 57%, #000 58% 70%, transparent 71%);
+    .auth-code { margin-bottom: 22px; color: var(--green-dark); font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+    .auth-card h2 { margin: 0; font-size: 22px; letter-spacing: -.025em; }
+    .auth-card p { margin: 8px 0 20px; color: var(--muted); font-size: 13px; }
+    .auth-card label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
+    .auth-card input {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: var(--surface);
+      color: var(--ink);
+    }
+    .auth-card input::placeholder { color: #707772; }
+    .auth-card .primary-button { margin-top: 16px; }
+    .auth-error { min-height: 20px; margin: 8px 0 0 !important; color: var(--red) !important; }
+    .auth-error:empty { display: none; }
 
+    dialog {
+      width: min(430px, calc(100% - 32px));
+      padding: 0;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: 0 20px 55px rgba(24, 32, 28, .18);
     }
-    .gauge::after { position: absolute; inset: 20px; content: ""; border: 1px dashed rgba(23,63,53,.13); border-radius: 50%; }
-    .gauge-copy { position: relative; z-index: 1; text-align: center; }
-    .gauge-value { display: block; font-family: "Iowan Old Style", Georgia, serif; color: var(--forest); font-size: 43px; line-height: 1; font-variant-numeric: tabular-nums; }
-    .gauge-label { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
-    .sensor-copy { min-width: 0; }
-    .sensor-main { margin: 0 0 5px; color: var(--forest); font-family: "Iowan Old Style", "Hiragino Mincho ProN", serif; font-size: clamp(23px, 4vw, 34px); }
-    .sensor-detail { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
-    .raw-value { color: var(--ink); font-weight: 800; font-variant-numeric: tabular-nums; }
-    .chart-wrap { position: relative; margin-top: 24px; padding-top: 10px; border-top: 1px solid var(--line); }
-    .chart-label { display: flex; justify-content: space-between; margin-bottom: 6px; color: var(--muted); font-size: 10px; }
-    #moisture-chart { display: block; width: 100%; height: 132px; overflow: visible; }
-    #chart-line { fill: none; stroke: var(--water); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-    #chart-area { fill: url(#chart-gradient); }
-    .calibration { display: grid; grid-template-columns: 1fr 1fr auto; gap: 9px; margin-top: 18px; }
-    .secondary-button, .ghost-button {
-      min-height: 42px; padding: 9px 13px; border: 1px solid var(--line); border-radius: 13px; color: var(--forest); background: rgba(255,255,255,.55); font-size: 12px; font-weight: 750; cursor: pointer;
+    dialog::backdrop { background: rgba(24, 32, 28, .44); }
+    .dialog-body { padding: 24px; }
+    .dialog-body h2 { margin: 0; font-size: 20px; }
+    .dialog-body > p { margin: 9px 0 18px; color: var(--muted); }
+    .dialog-duration { display: block; margin: 8px 0 18px; font-size: 38px; font-weight: 700; letter-spacing: -.04em; }
+    .dialog-warning { padding: 12px; border-left: 3px solid var(--amber); background: var(--amber-soft); color: #674a15; font-size: 12px; }
+    .dialog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 20px; }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 120;
+      width: min(380px, calc(100% - 36px));
+      padding: 12px 14px;
+      transform: translateY(20px);
+      border: 1px solid #b9d1c2;
+      border-radius: 10px;
+      background: #edf5ef;
+      color: var(--green-dark);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease-out, transform 160ms ease-out;
+      font-size: 13px;
     }
-    .secondary-button:hover, .ghost-button:hover { border-color: rgba(23,63,53,.32); background: #fff; }
-    .calibration-readout { margin: 12px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
-    .control-card { color: #f8f4e9; background: var(--forest); border-color: transparent; }
-    .control-card .card-note { color: rgba(248,244,233,.68); }
-    .control-card .pill { color: #f8f4e9; border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.08); }
-    .duration-row { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin: 25px 0 17px; }
-    .duration-value { font-family: "Iowan Old Style", Georgia, serif; font-size: 48px; line-height: .95; font-variant-numeric: tabular-nums; }
-    .duration-unit { margin-left: 5px; color: rgba(248,244,233,.64); font-size: 13px; }
-    .duration-number { width: 76px; padding: 9px; border: 1px solid rgba(255,255,255,.18); border-radius: 12px; color: #fff; background: rgba(255,255,255,.08); text-align: center; font-weight: 800; }
-    #duration-sec { --range-progress: 5%; width: 100%; height: 6px; appearance: none; border-radius: 999px; background: linear-gradient(to right, var(--water-pale) 0 var(--range-progress), rgba(255,255,255,.18) var(--range-progress) 100%); cursor: pointer; }
-    #duration-sec::-webkit-slider-thumb { width: 20px; height: 20px; appearance: none; border: 3px solid var(--forest); border-radius: 50%; background: var(--water-pale); box-shadow: 0 0 0 1px rgba(255,255,255,.65); }
-    #duration-sec::-moz-range-thumb { width: 16px; height: 16px; border: 3px solid var(--forest); border-radius: 50%; background: var(--water-pale); box-shadow: 0 0 0 1px rgba(255,255,255,.65); }
-    .presets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin: 15px 0 22px; }
-    .preset { min-height: 34px; border: 1px solid rgba(255,255,255,.13); border-radius: 999px; color: rgba(255,255,255,.74); background: transparent; font-size: 11px; cursor: pointer; }
-    .preset.active { color: #0f352e; border-color: var(--water-pale); background: var(--water-pale); font-weight: 800; }
-    .action-button { width: 100%; min-height: 56px; border: 0; border-radius: 17px; color: #0d352d; background: var(--water-pale); font-weight: 850; letter-spacing: .02em; cursor: pointer; box-shadow: 0 10px 30px rgba(0,0,0,.15); }
-    .action-button:disabled { opacity: .38; cursor: not-allowed; box-shadow: none; }
-    .hold-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.14); }
-    .hold-heading { margin: 0 0 9px; color: rgba(248,244,233,.72); font-size: 11px; font-weight: 750; letter-spacing: .05em; }
-    .hold-button {
-      width: 100%; min-height: 72px; padding: 12px 16px; border: 1px solid rgba(188,229,223,.62); border-radius: 18px;
-      color: #e8fffb; background: rgba(25,169,160,.18); font-weight: 850; cursor: pointer;
-      touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
-    }
-    .hold-button span, .hold-button small { display: block; pointer-events: none; }
-    .hold-button small { margin-top: 4px; color: rgba(232,255,251,.68); font-size: 10px; font-weight: 650; }
-    .hold-button.holding { color: #123d34; background: var(--water-pale); box-shadow: 0 0 0 4px rgba(188,229,223,.16); }
-    .hold-button.holding small { color: rgba(18,61,52,.7); }
-    .hold-button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
-    .hold-button:disabled { opacity: .38; cursor: not-allowed; box-shadow: none; }
-    .hold-help { margin: 8px 1px 0; color: rgba(248,244,233,.58); font-size: 10px; line-height: 1.55; }
-    .stop-button { width: 100%; min-height: 48px; margin-top: 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 15px; color: #ffd9cf; background: rgba(183,68,53,.18); font-weight: 800; cursor: pointer; }
-    .stop-button:disabled { opacity: .62; color: rgba(255,217,207,.82); cursor: not-allowed; }
-    .safety-copy { margin: 15px 0 0; color: rgba(248,244,233,.58); font-size: 10px; line-height: 1.6; }
-    .device-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--line); }
-    .metric { min-width: 0; padding: 15px; background: rgba(255,255,255,.62); }
-    .metric-label { display: block; color: var(--muted); font-size: 10px; letter-spacing: .08em; }
-    .metric-value { display: block; margin-top: 5px; color: var(--forest); font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-    .event { display: flex; gap: 12px; align-items: flex-start; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
-    .event-icon { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: var(--forest); background: var(--water-pale); font-size: 13px; font-weight: 900; }
-    .event strong { display: block; font-size: 12px; }
-    .event p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
-    .auth-gate { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 22px; background: rgba(15,38,32,.76); backdrop-filter: blur(18px); }
-    .auth-gate[hidden] { display: none; }
-    .auth-panel { width: min(420px, 100%); padding: 29px; border: 1px solid rgba(255,255,255,.2); border-radius: 26px; color: #f7f2e7; background: #173f35; box-shadow: 0 30px 90px rgba(0,0,0,.32); }
-    .auth-panel h2 { margin: 10px 0 8px; font-family: "Iowan Old Style", "Hiragino Mincho ProN", serif; font-size: 27px; }
-    .auth-panel .brand-mark { border: 1px solid rgba(255,255,255,.2); background: #24584b; }
-    .auth-panel .eyebrow { color: rgba(247,242,231,.86); }
-    .auth-panel p { margin: 0 0 20px; color: rgba(247,242,231,.84); font-size: 12px; line-height: 1.65; }
-    .token-input { width: 100%; min-height: 48px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.42); border-radius: 13px; color: #fff; background: rgba(255,255,255,.13); }
-    .token-input::placeholder { color: rgba(247,242,231,.58); }
-    .token-submit { width: 100%; min-height: 49px; margin-top: 10px; border: 0; border-radius: 13px; color: var(--forest); background: var(--water-pale); font-weight: 850; cursor: pointer; }
-    .auth-error { min-height: 18px; margin: 10px 0 0 !important; color: #ffc9bd !important; }
-    dialog { width: min(430px, calc(100% - 32px)); padding: 0; border: 0; border-radius: 24px; color: var(--ink); background: #fffdf7; box-shadow: 0 28px 90px rgba(20,40,34,.35); }
-    dialog::backdrop { background: rgba(11,31,26,.58); backdrop-filter: blur(6px); }
-    .dialog-inner { padding: 27px; }
-    .dialog-inner h2 { margin: 0 0 8px; font-family: "Iowan Old Style", "Hiragino Mincho ProN", serif; font-size: 26px; }
-    .dialog-inner p { color: var(--muted); font-size: 13px; line-height: 1.7; }
-    .dialog-dose { margin: 20px 0; padding: 18px; border-radius: 16px; color: #f8f4e9; background: var(--forest); text-align: center; }
-    .dialog-dose strong { font-family: "Iowan Old Style", Georgia, serif; font-size: 36px; }
-    .dialog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-    .dialog-actions button { min-height: 47px; border-radius: 13px; font-weight: 800; cursor: pointer; }
-    .cancel-button { border: 1px solid var(--line); color: var(--forest); background: transparent; }
-    .confirm-button { border: 0; color: #fff; background: var(--forest); }
-    .toast { position: fixed; right: 18px; bottom: max(18px, env(safe-area-inset-bottom)); z-index: 30; width: min(390px, calc(100% - 36px)); padding: 15px 17px; border-radius: 15px; color: #fff; background: #193d35; box-shadow: 0 18px 50px rgba(0,0,0,.24); font-size: 12px; line-height: 1.55; transform: translateY(20px); opacity: 0; pointer-events: none; transition: .2s ease; }
     .toast.show { transform: translateY(0); opacity: 1; }
-    .toast.error { background: #7f3328; }
-    .offline-banner { display: none; margin-bottom: 14px; padding: 12px 14px; border: 1px solid rgba(183,68,53,.25); border-radius: 14px; color: #79382d; background: rgba(255,226,218,.78); font-size: 12px; }
-    .offline-banner.show { display: block; }
+    .toast.error { border-color: #e3c7c3; background: var(--red-soft); color: #7e2f28; }
+
     @media (max-width: 780px) {
-      .shell { width: min(100% - 22px, 620px); padding-top: 18px; }
-      .grid { grid-template-columns: 1fr; }
-      .moisture-layout { grid-template-columns: 145px 1fr; gap: 15px; }
-      .gauge { width: 138px; height: 138px; }
-      .gauge-value { font-size: 36px; }
-      .calibration { grid-template-columns: 1fr 1fr; }
-      .calibration .ghost-button { grid-column: 1 / -1; }
-      .connection span:last-child { display: none; }
+      .shell { padding: 14px 14px 36px; }
+      .site-header { min-height: 48px; margin-bottom: 10px; }
+      .site-title h1 { font-size: 18px; }
+      .connection-divider, #last-sync { display: none; }
+      .dashboard-main { grid-template-columns: 1fr; }
+      .status-strip { grid-template-columns: 1fr 1fr; order: 0; }
+      .status-item { padding: 12px 14px; }
+      .status-item:nth-child(2) { border-right: 0; }
+      .status-item:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+      #control-panel, .monitor-column { grid-column: 1; grid-row: auto; position: static; }
+      #control-panel { order: 1; }
+      .monitor-column { order: 2; }
+      .offline-banner { order: -1; }
+      .panel-body { padding: 18px; }
+      .panel-heading { margin-bottom: 18px; }
+      .moisture-summary { gap: 14px; }
+      .reading-value { font-size: 48px; }
+      .device-facts { grid-template-columns: 1fr; }
+      .device-fact { padding: 13px 18px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .device-fact:last-child { border-bottom: 0; }
     }
-    @media (max-width: 420px) {
-      .moisture-layout { grid-template-columns: 1fr; text-align: center; }
-      .sensor-copy { margin-top: -4px; }
-      .presets { grid-template-columns: repeat(3, 1fr); }
-      .card { border-radius: 22px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
     }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
   </style>
 </head>
 <body class="auth-locked">
-  <div class="auth-gate" id="auth-gate">
-    <form class="auth-panel" id="token-form">
-      <div class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M12 21V10m0 3C8 13 5 10 5 6c4 0 7 2 7 6m0 3c4 0 7-3 7-7-4 0-7 2-7 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="shell">
+    <header class="site-header">
+      <div class="site-title">
+        <span class="site-code">TREE 01</span>
+        <h1>木の水やり</h1>
       </div>
-      <h2>木の水やりに接続</h2>
-      <p>ATOM Liteに設定したAPIトークンを入力してください。トークンはこのタブの間だけ保持し、端末には永続保存しません。</p>
-      <label class="eyebrow" for="api-token">API TOKEN</label>
-      <input class="token-input" id="api-token" type="password" autocomplete="off" spellcheck="false" placeholder="32文字以上のAPIトークン" required>
-      <button class="token-submit" type="submit">状態を確認して接続</button>
+      <div class="connection" aria-live="polite">
+        <span class="connection-dot" id="connection-dot" aria-hidden="true"></span>
+        <span id="connection-label">未接続</span>
+        <span class="connection-divider" aria-hidden="true"></span>
+        <time id="last-sync">--:--:--</time>
+      </div>
+    </header>
+
+    <main class="dashboard-main" id="dashboard-main" inert>
+      <div class="offline-banner" id="offline-banner" role="alert">
+        デバイスから応答がありません。停止ボタンは送信できますが、現物のポンプも確認してください。
+      </div>
+
+      <section class="status-strip" id="status-strip" aria-label="現在の状態">
+        <div class="status-item">
+          <span class="status-label">デバイス</span>
+          <strong class="status-value" id="device-state">未接続</strong>
+        </div>
+        <div class="status-item">
+          <span class="status-label">ポンプ</span>
+          <strong class="status-value" id="pump-state">—</strong>
+        </div>
+        <div class="status-item">
+          <span class="status-label">残り時間</span>
+          <strong class="status-value" id="remaining-time">—</strong>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Wi-Fi</span>
+          <strong class="status-value" id="wifi-rssi">— dBm</strong>
+        </div>
+      </section>
+
+      <section class="panel" id="control-panel" aria-labelledby="control-title">
+        <div class="panel-body">
+          <div class="panel-heading">
+            <div>
+              <h2 id="control-title">給水</h2>
+              <p>時間を指定するか、押している間だけ動かします。</p>
+            </div>
+            <span class="state-label" id="armed-state">—</span>
+          </div>
+
+          <div class="control-section">
+            <h3 class="control-title">時間を指定</h3>
+            <p class="control-copy">最大180秒。開始前に確認画面を表示します。</p>
+            <div class="duration-row">
+              <label for="duration-number">運転時間</label>
+              <div class="duration-input">
+                <input id="duration-number" type="number" min="1" max="180" value="10" inputmode="numeric" aria-label="給水秒数">
+                <span class="duration-unit">秒</span>
+              </div>
+            </div>
+            <input id="duration-sec" type="range" min="1" max="180" value="10" aria-label="給水秒数">
+            <div class="presets" aria-label="給水時間プリセット">
+              <button type="button" class="preset active" data-sec="10">10秒</button>
+              <button type="button" class="preset" data-sec="30">30秒</button>
+              <button type="button" class="preset" data-sec="60">1分</button>
+              <button type="button" class="preset" data-sec="180">3分</button>
+            </div>
+            <button type="button" class="primary-button" id="water-button" disabled>10秒給水</button>
+          </div>
+
+          <div class="control-section">
+            <h3 class="control-title">押して給水</h3>
+            <p class="control-copy">指またはキーを離すと停止します。最長10分です。</p>
+            <button type="button" class="hold-button" id="hold-button" aria-pressed="false" disabled>
+              <span id="hold-button-label">押している間だけ給水</span>
+            </button>
+            <button type="button" class="stop-button" id="stop-button" disabled>停止中</button>
+            <p class="control-note">通信が切れた場合も、ATOM側の1.5秒タイマーで停止します。</p>
+          </div>
+        </div>
+      </section>
+
+      <div class="monitor-column">
+      <section class="panel" id="sensor-panel" aria-labelledby="sensor-title">
+        <div class="panel-body">
+          <div class="panel-heading">
+            <div>
+              <h2 id="sensor-title">土の水分</h2>
+              <p id="calibration-help">生値を表示しています。自動給水には使用しません。</p>
+            </div>
+            <span class="state-label" id="calibration-state">未校正</span>
+          </div>
+
+          <div class="moisture-summary">
+            <div>
+              <span class="reading-label">センサー値</span>
+              <strong class="reading-value" id="moisture-adc">----</strong>
+              <span class="reading-unit">ADC</span>
+            </div>
+            <div class="dryness">
+              <output id="dryness-value">--%</output>
+              <span id="dryness-label">校正が必要です</span>
+            </div>
+          </div>
+          <div class="moisture-track" id="moisture-track" aria-hidden="true" hidden><div class="moisture-fill" id="moisture-fill"></div></div>
+
+          <div class="chart-wrap" id="chart-wrap" hidden>
+            <div class="chart-head"><span>直近3分</span><span id="chart-range">—</span></div>
+            <svg id="moisture-chart" viewBox="0 0 640 132" preserveAspectRatio="none" role="img" aria-label="水分センサー値の推移">
+              <path id="chart-line" d=""></path>
+            </svg>
+          </div>
+
+          <details class="calibration-panel" id="calibration-panel">
+            <summary>センサー校正</summary>
+            <div class="calibration-content">
+              <div class="calibration-actions">
+                <button type="button" class="secondary-button" id="calibrate-dry">現在値を「乾」に設定</button>
+                <button type="button" class="secondary-button" id="calibrate-wet">現在値を「湿」に設定</button>
+              </div>
+              <button type="button" class="secondary-button reset-button" id="reset-calibration">校正をリセット</button>
+              <p class="calibration-copy" id="calibration-readout">乾: 未設定 / 湿: 未設定。乾燥度は参考表示で、自動給水には使用しません。</p>
+            </div>
+          </details>
+
+          <div class="last-event">
+            <strong id="last-event-title">給水履歴はありません</strong>
+            <span id="last-event-detail">request id / runtime / stop reason</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="device-panel" aria-label="デバイス情報">
+        <div class="device-facts">
+          <div class="device-fact"><span>稼働時間</span><strong id="uptime">—</strong></div>
+          <div class="device-fact"><span>Firmware</span><strong id="firmware-version">—</strong></div>
+          <div class="device-fact"><span>状態更新</span><strong id="device-updated">—</strong></div>
+        </div>
+      </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="auth-gate" id="auth-gate">
+    <form class="auth-card" id="token-form">
+      <div class="auth-code">TREE 01</div>
+      <h2>デバイスに接続</h2>
+      <p>ATOM LiteのAPIトークンを入力します。このタブを閉じると消去されます。</p>
+      <label for="api-token">APIトークン</label>
+      <input id="api-token" type="password" minlength="32" maxlength="256" placeholder="32文字以上のAPIトークン" autocomplete="off" required>
       <p class="auth-error" id="auth-error" role="alert"></p>
+      <button type="submit" class="primary-button">接続</button>
     </form>
   </div>
 
-  <main class="shell" id="dashboard-main" inert>
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M12 21V10m0 3C8 13 5 10 5 6c4 0 7 2 7 6m0 3c4 0 7-3 7-7-4 0-7 2-7 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-        <div><p class="eyebrow">BALCONY / TREE 01</p><h1>木の水やり</h1></div>
+  <dialog id="water-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-body">
+      <h2 id="dialog-title">給水を開始しますか？</h2>
+      <p>ポンプを次の時間だけ運転します。</p>
+      <strong class="dialog-duration" id="dialog-duration">10秒</strong>
+      <div class="dialog-warning">開始後に通信が切れてもATOM側の安全タイマーで停止します。結果が不明な場合は自動再試行しません。</div>
+      <div class="dialog-actions">
+        <button type="button" class="secondary-button" id="cancel-water">キャンセル</button>
+        <button type="button" class="primary-button" id="confirm-water">開始</button>
       </div>
-      <div class="connection"><span class="connection-dot" id="connection-dot"></span><span id="connection-label">接続待ち</span><span id="last-sync">—</span></div>
-    </header>
-
-    <div class="offline-banner" id="offline-banner" role="status">ATOM Liteに接続できません。ポンプの状態を現物でも確認してください。</div>
-
-    <div class="grid">
-      <section class="stack">
-        <article class="card">
-          <div class="card-inner">
-            <div class="card-head">
-              <div><h2 class="card-title">土の水分</h2><p class="card-note">U101のADCを9点中央値で表示。2点校正後のみ乾燥度を算出します。</p></div>
-              <span class="pill" id="calibration-state">未校正</span>
-            </div>
-            <div class="moisture-layout">
-              <div class="gauge" id="dryness-gauge">
-                <div class="gauge-copy"><span class="gauge-value" id="dryness-value">--%</span><span class="gauge-label">乾燥度</span></div>
-              </div>
-              <div class="sensor-copy">
-                <p class="sensor-main" id="dryness-label">校正が必要です</p>
-                <p class="sensor-detail">現在の生値 <span class="raw-value" id="moisture-adc">----</span> ADC<br><span id="calibration-help">乾いた土と十分に湿った土で、それぞれ現在値を記録してください。</span></p>
-              </div>
-            </div>
-            <div class="chart-wrap">
-              <div class="chart-label"><span>← 過去 ・ 直近の推移 ・ 現在 →</span><span id="chart-range">データ待ち</span></div>
-              <svg id="moisture-chart" viewBox="0 0 640 132" preserveAspectRatio="none" role="img" aria-label="水分センサーADCの推移">
-                <defs><linearGradient id="chart-gradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#19a9a0" stop-opacity=".28"/><stop offset="1" stop-color="#19a9a0" stop-opacity="0"/></linearGradient></defs>
-                <path id="chart-area" d=""></path><path id="chart-line" d=""></path>
-              </svg>
-            </div>
-            <div class="calibration">
-              <button class="secondary-button" id="calibrate-dry" type="button">現在値を「乾」に設定</button>
-              <button class="secondary-button" id="calibrate-wet" type="button">現在値を「湿」に設定</button>
-              <button class="ghost-button" id="reset-calibration" type="button">校正をリセット</button>
-            </div>
-            <p class="calibration-readout" id="calibration-readout">乾: 未設定 / 湿: 未設定。乾燥度は参考表示で、自動給水には使用しません。</p>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-inner">
-            <div class="card-head"><div><h2 class="card-title">ATOM Lite</h2><p class="card-note">給水状態とローカル安全制御</p></div><span class="pill" id="device-state">UNKNOWN</span></div>
-            <div class="device-grid">
-              <div class="metric"><span class="metric-label">PUMP</span><span class="metric-value" id="pump-state">停止</span></div>
-              <div class="metric"><span class="metric-label">WI-FI</span><span class="metric-value" id="wifi-rssi">— dBm</span></div>
-              <div class="metric"><span class="metric-label">REMAINING</span><span class="metric-value" id="remaining-time">—</span></div>
-              <div class="metric"><span class="metric-label">UPTIME</span><span class="metric-value" id="uptime">—</span></div>
-            </div>
-            <div class="event"><span class="event-icon">↳</span><div><strong id="last-event-title">実行履歴なし</strong><p id="last-event-detail">給水後に実行時間と停止理由を表示します。</p></div></div>
-          </div>
-        </article>
-      </section>
-
-      <aside class="stack">
-        <article class="card control-card">
-          <div class="card-inner">
-            <div class="card-head"><div><h2 class="card-title">手動で水やり</h2><p class="card-note">1回ごとに秒数を指定。ESP32が最大180秒で物理停止します。</p></div><span class="pill" id="armed-state">確認中</span></div>
-            <div class="duration-row"><div><span class="duration-value" id="duration-display">10</span><span class="duration-unit">秒</span></div><input class="duration-number" id="duration-number" type="number" min="1" max="180" value="10" inputmode="numeric" aria-label="給水時間（秒）"></div>
-            <input id="duration-sec" type="range" min="1" max="180" value="10" aria-label="給水時間（秒）">
-            <div class="presets" aria-label="給水時間プリセット">
-              <button class="preset active" type="button" data-sec="10">10秒</button><button class="preset" type="button" data-sec="30">30秒</button><button class="preset" type="button" data-sec="60">1分</button><button class="preset" type="button" data-sec="120">2分</button><button class="preset" type="button" data-sec="180">3分</button>
-            </div>
-            <button class="action-button" id="water-button" type="button" disabled>この時間で水やり</button>
-            <div class="hold-section">
-              <p class="hold-heading">長く水やりする場合</p>
-              <button class="hold-button" id="hold-button" type="button" aria-pressed="false" aria-describedby="hold-help" disabled><span id="hold-button-label">押している間だけ水やり</span><small>指を離すと停止</small></button>
-              <p class="hold-help" id="hold-help">500msごとにATOMへ生存確認します。通信が1.5秒途切れると物理停止し、押しっぱなしでも最長10分で停止します。</p>
-            </div>
-            <button class="stop-button" id="stop-button" type="button" disabled>ポンプを緊急停止</button>
-            <p class="safety-copy">給水開始前に吐出口・タンク・排水を目視確認してください。通信結果が不明な場合、同じ要求を自動再試行しません。</p>
-          </div>
-        </article>
-      </aside>
-    </div>
-  </main>
-
-  <dialog id="water-dialog">
-    <div class="dialog-inner">
-      <p class="eyebrow">FINAL CHECK</p><h2>水やりを始めますか？</h2>
-      <p>吐出口が木の根元に固定され、タンクと排水に問題がないことを確認してください。</p>
-      <div class="dialog-dose"><strong id="dialog-duration">10秒</strong><br><span>1回だけ実行</span></div>
-      <div class="dialog-actions"><button class="cancel-button" id="cancel-water" type="button">戻る</button><button class="confirm-button" id="confirm-water" type="button">確認して開始</button></div>
     </div>
   </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
     "use strict";
+
     const TOKEN_KEY = "watering-api-token-v1";
     const CALIBRATION_KEY = "watering-moisture-calibration-v1";
-    // These are fail-closed client expectations, intentionally duplicated from
-    // firmware. A stale or mismatched dashboard must reject the start response.
+    // Fail-closed client expectations intentionally mirror firmware constants.
     const HOLD_HEARTBEAT_MS = 500;
     const HOLD_LEASE_MS = 1500;
     const HOLD_MAX_RUN_MS = 600000;
-    const state = { token: sessionStorage.getItem(TOKEN_KEY) || "", status: null, adc: null, history: [], maxDurationSec: 180 };
-    const hold = {
-      pressed: false, active: false, startInFlight: false,
-      keepaliveInFlight: false, requestId: "", heartbeatTimer: 0,
-      pointerId: null, stopPromise: null
+    const DEVICE_STATE_NAMES = {
+      BOOT_GUARD: "起動待機",
+      IDLE: "待機",
+      WATERING: "給水中",
+      COOLDOWN: "クールダウン",
+      ERROR: "エラー"
     };
-    let calibration = loadCalibration();
-    let toastTimer = 0;
-    let statusRequestSequence = 0;
+
+    const state = {
+      token: sessionStorage.getItem(TOKEN_KEY) || "",
+      status: null,
+      adc: null,
+      history: [],
+      maxDurationSec: 180
+    };
+    const hold = {
+      pressed: false,
+      active: false,
+      startInFlight: false,
+      keepaliveInFlight: false,
+      requestId: "",
+      heartbeatTimer: 0,
+      pointerId: null,
+      stopPromise: null
+    };
 
     const $ = (id) => document.getElementById(id);
     const authGate = $("auth-gate");
@@ -317,11 +585,16 @@
     const durationSlider = $("duration-sec");
     const durationNumber = $("duration-number");
     const holdButton = $("hold-button");
+    let calibration = loadCalibration();
+    let toastTimer = 0;
+    let statusRequestSequence = 0;
 
     function loadCalibration() {
       try {
         const value = JSON.parse(localStorage.getItem(CALIBRATION_KEY) || "null");
-        if (value && Number.isInteger(value.dryAdc) && Number.isInteger(value.wetAdc)) return value;
+        if (value && Number.isInteger(value.dryAdc) && Number.isInteger(value.wetAdc)) {
+          return value;
+        }
       } catch (_) {}
       return { dryAdc: null, wetAdc: null };
     }
@@ -332,14 +605,19 @@
     }
 
     function requestHeaders(json = false) {
-      const headers = { "Authorization": `Bearer ${state.token}`, "Accept": "application/json" };
+      const headers = {
+        "Authorization": `Bearer ${state.token}`,
+        "Accept": "application/json"
+      };
       if (json) headers["Content-Type"] = "application/json";
       return headers;
     }
 
     async function parseResponse(response) {
       let payload = {};
-      try { payload = await response.json(); } catch (_) {}
+      try {
+        payload = await response.json();
+      } catch (_) {}
       if (!response.ok) {
         const error = new Error(payload.error || `HTTP ${response.status}`);
         error.status = response.status;
@@ -349,51 +627,88 @@
       return payload;
     }
 
+    async function apiRequest(path, { method = "GET", payload = null, keepalive = false } = {}) {
+      const options = {
+        method,
+        headers: requestHeaders(payload !== null),
+        cache: "no-store",
+        keepalive
+      };
+      if (payload !== null) options.body = JSON.stringify(payload);
+      return parseResponse(await fetch(path, options));
+    }
+
     async function refreshStatus() {
       if (!state.token) return;
       const requestSequence = ++statusRequestSequence;
       try {
-        const response = await fetch("/v1/status", { headers: requestHeaders(), cache: "no-store" });
-        const payload = await parseResponse(response);
+        const payload = await apiRequest("/v1/status");
         if (requestSequence !== statusRequestSequence) return;
-        state.status = payload;
-        if (Number.isInteger(payload.moisture_adc)) {
-          state.adc = payload.moisture_adc;
-          state.history.push(payload.moisture_adc);
-          if (state.history.length > 90) state.history.shift();
-        }
-        if (Number.isInteger(payload.max_duration_sec)) {
-          state.maxDurationSec = Math.max(1, Math.min(180, payload.max_duration_sec));
-          durationSlider.max = String(state.maxDurationSec);
-          durationNumber.max = String(state.maxDurationSec);
-        }
-        authGate.hidden = true;
-        document.body.classList.remove("auth-locked");
-        $("dashboard-main").inert = false;
-        $("offline-banner").classList.remove("show");
+        acceptStatus(payload);
+        unlockDashboard();
         setConnection("online", "接続中");
         render();
       } catch (error) {
         if (requestSequence !== statusRequestSequence) return;
-        if (error.status === 401) {
-          state.token = "";
-          sessionStorage.removeItem(TOKEN_KEY);
-          authGate.hidden = false;
-          document.body.classList.add("auth-locked");
-          $("dashboard-main").inert = true;
-          $("auth-error").textContent = "トークンを確認してください。";
-        } else {
-          setConnection("error", "応答なし");
-          $("offline-banner").classList.add("show");
-          disableActions();
+        handleStatusError(error);
+      }
+    }
+
+    function acceptStatus(payload) {
+      if (!payload || typeof payload !== "object") {
+        throw new Error("invalid_status_payload");
+      }
+      state.status = payload;
+      if (Number.isInteger(payload.moisture_adc)) {
+        state.adc = payload.moisture_adc;
+        state.history.push(payload.moisture_adc);
+        if (state.history.length > 90) state.history.shift();
+      }
+      if (Number.isInteger(payload.max_duration_sec)) {
+        const boundedMaxDuration = Math.max(1, Math.min(180, payload.max_duration_sec));
+        if (state.maxDurationSec !== boundedMaxDuration) {
+          state.maxDurationSec = boundedMaxDuration;
+          durationSlider.max = String(state.maxDurationSec);
+          durationNumber.max = String(state.maxDurationSec);
+          setDuration(durationSlider.value);
         }
       }
     }
 
-    function setConnection(kind, label) {
+    function unlockDashboard() {
+      authGate.hidden = true;
+      document.body.classList.remove("auth-locked");
+      $("dashboard-main").inert = false;
+      $("offline-banner").classList.remove("show");
+    }
+
+    function handleStatusError(error) {
+      if (error.status === 401) {
+        state.token = "";
+        sessionStorage.removeItem(TOKEN_KEY);
+        authGate.hidden = false;
+        document.body.classList.add("auth-locked");
+        $("dashboard-main").inert = true;
+        $("auth-error").textContent = "トークンを確認してください。";
+        return;
+      }
+      setConnection("error", "応答なし", false);
+      $("offline-banner").classList.add("show");
+      $("armed-state").textContent = "状態不明";
+      disableActions();
+    }
+
+    function setConnection(kind, label, updateTimestamp = true) {
       $("connection-dot").className = `connection-dot ${kind}`;
       $("connection-label").textContent = label;
-      $("last-sync").textContent = new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      if (!updateTimestamp) return;
+      const updated = new Date().toLocaleTimeString("ja-JP", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+      $("last-sync").textContent = updated;
+      $("device-updated").textContent = updated;
     }
 
     function render() {
@@ -402,102 +717,182 @@
       renderDevice();
     }
 
+    function calibrationReady() {
+      return Number.isInteger(calibration.dryAdc)
+        && Number.isInteger(calibration.wetAdc)
+        && calibration.dryAdc !== calibration.wetAdc;
+    }
+
     function renderMoisture() {
       $("moisture-adc").textContent = state.adc === null ? "----" : String(state.adc);
-      const calibrated = Number.isInteger(calibration.dryAdc) && Number.isInteger(calibration.wetAdc) && calibration.dryAdc !== calibration.wetAdc;
       $("calibration-readout").textContent = `乾: ${calibration.dryAdc ?? "未設定"} / 湿: ${calibration.wetAdc ?? "未設定"}。乾燥度は参考表示で、自動給水には使用しません。`;
-      if (!calibrated || state.adc === null) {
+      if (!calibrationReady() || state.adc === null) {
         $("calibration-state").textContent = "未校正";
         $("dryness-value").textContent = "--%";
         $("dryness-label").textContent = "校正が必要です";
-        $("dryness-gauge").style.setProperty("--gauge-angle", "0deg");
-        $("dryness-gauge").style.setProperty("--gauge-progress", "transparent");
+        $("moisture-fill").style.width = "0%";
+        $("moisture-track").hidden = true;
+        $("calibration-help").textContent = "生値を表示しています。自動給水には使用しません。";
         return;
       }
-      const dryness = Math.round(Math.max(0, Math.min(100, ((state.adc - calibration.wetAdc) / (calibration.dryAdc - calibration.wetAdc)) * 100)));
+
+      const dryness = Math.round(Math.max(0, Math.min(
+        100,
+        ((state.adc - calibration.wetAdc) / (calibration.dryAdc - calibration.wetAdc)) * 100
+      )));
       $("calibration-state").textContent = "2点校正済み";
       $("dryness-value").textContent = `${dryness}%`;
-      $("dryness-gauge").style.setProperty("--gauge-angle", `${dryness * 2.7}deg`);
-      $("dryness-gauge").style.setProperty("--gauge-progress", "var(--clay)");
-      $("dryness-label").textContent = dryness >= 70 ? "乾燥寄りです" : dryness >= 35 ? "中間の水分です" : "湿潤寄りです";
+      $("dryness-label").textContent = dryness >= 70
+        ? "乾燥寄り"
+        : dryness >= 35 ? "中間" : "湿潤寄り";
+      $("moisture-fill").style.width = `${dryness}%`;
+      $("moisture-track").hidden = false;
       $("calibration-help").textContent = "校正点から算出した参考値です。自動判定には使いません。";
     }
 
     function renderChart() {
       const values = state.history;
-      if (values.length < 2) { $("chart-line").setAttribute("d", ""); $("chart-area").setAttribute("d", ""); return; }
-      const low = Math.min(...values), high = Math.max(...values), span = Math.max(40, high - low);
+      if (values.length < 2 || new Set(values).size < 2) {
+        $("chart-wrap").hidden = true;
+        $("chart-line").setAttribute("d", "");
+        return;
+      }
+      $("chart-wrap").hidden = false;
+      const low = Math.min(...values);
+      const high = Math.max(...values);
+      const span = Math.max(40, high - low);
       const points = values.map((value, index) => {
         const x = 8 + (index / (values.length - 1)) * 624;
         const y = 116 - ((value - low) / span) * 94;
         return [x, y];
       });
-      const line = points.map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+      const line = points
+        .map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`)
+        .join(" ");
       $("chart-line").setAttribute("d", line);
-      $("chart-area").setAttribute("d", `${line} L640,132 L0,132 Z`);
       $("chart-range").textContent = `${low} — ${high} ADC`;
     }
 
+    function isHoldEngaged() {
+      return hold.pressed || hold.startInFlight || hold.active;
+    }
+
+    function hasHoldContext() {
+      return isHoldEngaged() || Boolean(hold.requestId);
+    }
+
     function renderHoldButton() {
-      const engaged = hold.pressed || hold.startInFlight || hold.active;
+      const engaged = isHoldEngaged();
       holdButton.classList.toggle("holding", engaged);
       holdButton.setAttribute("aria-pressed", engaged ? "true" : "false");
       $("hold-button-label").textContent = hold.active
-        ? "給水中 — 指を離すと停止"
-        : hold.startInFlight ? "開始を確認中…" : "押している間だけ水やり";
+        ? "給水中 — 離すと停止"
+        : hold.startInFlight ? "開始を確認中…" : "押している間だけ給水";
+    }
+
+    function renderStatusFacts(status) {
+      $("device-state").textContent = DEVICE_STATE_NAMES[status.state] || status.state || "不明";
+      $("pump-state").textContent = status.pump ? "運転中" : "停止";
+      $("wifi-rssi").textContent = Number.isInteger(status.wifi_rssi)
+        ? `${status.wifi_rssi} dBm` : "— dBm";
+      $("remaining-time").textContent = status.remaining_ms > 0
+        ? formatMs(status.remaining_ms) : "—";
+      $("uptime").textContent = formatUptime(status.uptime_ms);
+      $("armed-state").textContent = status.armed ? "操作可能" : "未アーム";
+      $("firmware-version").textContent = status.firmware_version || "—";
+    }
+
+    function renderLastEvent(status) {
+      if (!status.last_request_id) {
+        $("last-event-title").textContent = "給水履歴はありません";
+        $("last-event-detail").textContent = "request id / runtime / stop reason";
+        return;
+      }
+      $("last-event-title").textContent = status.last_stop_reason === "DOSE_COMPLETE"
+        ? "前回の給水は正常完了"
+        : status.pump ? "給水を実行中" : "前回の実行記録";
+      $("last-event-detail").textContent = `${status.last_request_id} / ${formatMs(status.last_runtime_ms)} / ${status.last_stop_reason || "実行中"}`;
+    }
+
+    function reconcileHoldWithStatus(status) {
+      if ((hold.active || hold.startInFlight)
+          && status.last_request_id === hold.requestId
+          && status.pump !== true) {
+        hold.pressed = false;
+        hold.startInFlight = false;
+        hold.keepaliveInFlight = false;
+        void releaseHold({ force: true });
+      }
+    }
+
+    function renderControlAvailability(status) {
+      const canWater = status.state === "IDLE" && status.pump === false && status.armed === true;
+      const holdEngaged = isHoldEngaged();
+      const stopIsActive = status.pump === true || holdEngaged;
+      $("water-button").disabled = !canWater;
+      holdButton.disabled = !(canWater || holdEngaged);
+      $("stop-button").disabled = status.pump !== true && !holdEngaged;
+      $("stop-button").classList.toggle("active-stop", stopIsActive);
+      $("stop-button").textContent = stopIsActive ? "今すぐ停止" : "停止中";
+      renderHoldButton();
     }
 
     function renderDevice() {
       const status = state.status;
       if (!status) return;
-      const names = { BOOT_GUARD: "起動待機", IDLE: "待機", WATERING: "給水中", COOLDOWN: "クールダウン", ERROR: "エラー" };
-      $("device-state").textContent = names[status.state] || status.state || "UNKNOWN";
-      $("pump-state").textContent = status.pump ? "運転中" : "停止";
-      $("wifi-rssi").textContent = Number.isInteger(status.wifi_rssi) ? `${status.wifi_rssi} dBm` : "— dBm";
-      $("remaining-time").textContent = formatMs(status.remaining_ms);
-      $("uptime").textContent = formatUptime(status.uptime_ms);
-      $("armed-state").textContent = status.armed ? "ARMED" : "未アーム";
-      if (status.last_request_id) {
-        $("last-event-title").textContent = status.last_stop_reason === "DOSE_COMPLETE" ? "前回の給水は正常完了" : status.pump ? "給水を実行中" : "前回の実行記録";
-        $("last-event-detail").textContent = `${status.last_request_id} / ${formatMs(status.last_runtime_ms)} / ${status.last_stop_reason || "実行中"}`;
-      }
-      if ((hold.active || hold.startInFlight) &&
-          status.last_request_id === hold.requestId &&
-          status.pump !== true) {
-        hold.pressed = false;
-        hold.startInFlight = false;
-        hold.keepaliveInFlight = false;
-        void releaseHold("device-reported-stopped", true, true);
-      }
-      const canWater = status.state === "IDLE" && status.pump === false && status.armed === true;
-      const holdEngaged = hold.pressed || hold.startInFlight || hold.active;
-      $("water-button").disabled = !canWater;
-      holdButton.disabled = !(canWater || holdEngaged);
-      $("stop-button").disabled = status.pump !== true && !holdEngaged;
-      renderHoldButton();
+      renderStatusFacts(status);
+      renderLastEvent(status);
+      reconcileHoldWithStatus(status);
+      renderControlAvailability(status);
     }
 
     function disableActions() {
       $("water-button").disabled = true;
       $("stop-button").disabled = !state.token;
-      holdButton.disabled = !(hold.pressed || hold.startInFlight || hold.active);
+      $("stop-button").textContent = "停止を送信";
+      holdButton.disabled = !isHoldEngaged();
       renderHoldButton();
     }
-    function formatMs(value) { if (!Number.isInteger(value)) return "—"; if (value < 1000) return `${value} ms`; const sec = Math.ceil(value / 1000); return sec >= 60 ? `${Math.floor(sec / 60)}分${sec % 60}秒` : `${sec}秒`; }
-    function formatUptime(value) { if (!Number.isInteger(value)) return "—"; const min = Math.floor(value / 60000); return min >= 60 ? `${Math.floor(min / 60)}時間${min % 60}分` : `${min}分`; }
+
+    function formatMs(value) {
+      if (!Number.isInteger(value)) return "—";
+      if (value < 1000) return `${value} ms`;
+      const seconds = Math.ceil(value / 1000);
+      return seconds >= 60
+        ? `${Math.floor(seconds / 60)}分${seconds % 60}秒`
+        : `${seconds}秒`;
+    }
+
+    function formatUptime(value) {
+      if (!Number.isInteger(value)) return "—";
+      const minutes = Math.floor(value / 60000);
+      return minutes >= 60
+        ? `${Math.floor(minutes / 60)}時間${minutes % 60}分`
+        : `${minutes}分`;
+    }
 
     function setDuration(raw) {
-      const duration = Math.max(1, Math.min(state.maxDurationSec, Number.parseInt(raw, 10) || 1));
-      durationSlider.value = String(duration); durationNumber.value = String(duration); $("duration-display").textContent = String(duration);
-      const range = Math.max(1, state.maxDurationSec - 1);
-      durationSlider.style.setProperty("--range-progress", `${((duration - 1) / range) * 100}%`);
-      document.querySelectorAll(".preset").forEach((button) => button.classList.toggle("active", Number(button.dataset.sec) === duration));
+      const duration = Math.max(
+        1,
+        Math.min(state.maxDurationSec, Number.parseInt(raw, 10) || 1)
+      );
+      durationSlider.value = String(duration);
+      durationNumber.value = String(duration);
+      $("water-button").textContent = `${duration}秒給水`;
+      document.querySelectorAll(".preset").forEach((button) => {
+        button.classList.toggle("active", Number(button.dataset.sec) === duration);
+      });
       return duration;
     }
 
     function showToast(message, error = false) {
-      const toast = $("toast"); toast.textContent = message; toast.className = `toast show${error ? " error" : ""}`;
-      clearTimeout(toastTimer); toastTimer = setTimeout(() => { toast.className = "toast"; }, 6000);
+      const toast = $("toast");
+      toast.textContent = message;
+      toast.className = `toast show${error ? " error" : ""}`;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.className = "toast";
+      }, 6000);
     }
 
     function createRequestId() {
@@ -505,9 +900,14 @@
       if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
         globalThis.crypto.getRandomValues(bytes);
       } else {
-        for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+        for (let index = 0; index < bytes.length; index += 1) {
+          bytes[index] = Math.floor(Math.random() * 256);
+        }
       }
-      const randomPart = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+      const randomPart = Array.from(
+        bytes,
+        (value) => value.toString(16).padStart(2, "0")
+      ).join("");
       return `web-${Date.now().toString(36)}-${randomPart}`;
     }
 
@@ -523,12 +923,13 @@
       const requestId = createRequestId();
       $("confirm-water").disabled = true;
       try {
-        const response = await fetch("/v1/water", {
-          method: "POST", headers: requestHeaders(true), cache: "no-store",
-          body: JSON.stringify({ request_id: requestId, duration_sec: duration })
+        const payload = await apiRequest("/v1/water", {
+          method: "POST",
+          payload: { request_id: requestId, duration_sec: duration }
         });
-        const payload = await parseResponse(response);
-        if (payload.accepted !== true || payload.request_id !== requestId || payload.scheduled_ms !== duration * 1000) {
+        if (payload.accepted !== true
+            || payload.request_id !== requestId
+            || payload.scheduled_ms !== duration * 1000) {
           throw ambiguousAcceptance();
         }
         showToast(`${payload.scheduled_ms / 1000}秒の給水を開始しました。`);
@@ -536,26 +937,40 @@
         await refreshStatus();
       } catch (error) {
         waterDialog.close();
-        if (error instanceof TypeError || error.ambiguous) showToast("給水要求の結果未確定です。自動再試行しません。現物を確認してください。", true);
-        else showToast(`給水を開始できませんでした: ${error.code || error.message}`, true);
+        if (error instanceof TypeError || error.ambiguous) {
+          showToast(
+            "給水要求の結果未確定です。自動再試行しません。現物を確認してください。",
+            true
+          );
+        } else {
+          showToast(`給水を開始できませんでした: ${error.code || error.message}`, true);
+        }
         await refreshStatus();
-      } finally { $("confirm-water").disabled = false; }
+      } finally {
+        $("confirm-water").disabled = false;
+      }
     }
 
     async function stopWatering({ silent = false, keepalive = false, refresh = true } = {}) {
       if (!silent) $("stop-button").disabled = true;
       let confirmed = false;
       try {
-        const response = await fetch("/v1/stop", {
-          method: "POST", headers: requestHeaders(true), cache: "no-store",
-          body: "{}", keepalive
+        const payload = await apiRequest("/v1/stop", {
+          method: "POST",
+          payload: {},
+          keepalive
         });
-        const payload = await parseResponse(response);
-        if (payload.stopped !== true) throw new Error("invalid_stop_acknowledgement");
+        if (payload.stopped !== true) {
+          throw new Error("invalid_stop_acknowledgement");
+        }
         confirmed = true;
-        if (!silent) showToast("停止命令を確認しました。ポンプOFFを状態欄でも確認してください。");
+        if (!silent) {
+          showToast("停止命令を確認しました。ポンプOFFを状態欄でも確認してください。");
+        }
       } catch (_) {
-        if (!silent) showToast("停止を確認できません。現物のポンプを確認してください。", true);
+        if (!silent) {
+          showToast("停止を確認できません。現物のポンプを確認してください。", true);
+        }
       }
       if (refresh) await refreshStatus();
       return confirmed;
@@ -573,8 +988,8 @@
       }
     }
 
-    async function releaseHold(reason = "release", keepalive = true, force = false, silent = true) {
-      const wasEngaged = hold.pressed || hold.startInFlight || hold.active || Boolean(hold.requestId);
+    async function releaseHold({ keepalive = true, force = false, silent = true } = {}) {
+      const wasEngaged = hasHoldContext();
       hold.pressed = false;
       hold.active = false;
       hold.pointerId = null;
@@ -592,17 +1007,23 @@
       if (hold.stopPromise === stopPromise) hold.stopPromise = null;
       if (!hold.startInFlight) hold.requestId = "";
       renderHoldButton();
-      void reason;
+    }
+
+    function captureHoldPointer(event) {
+      if (event.type !== "pointerdown") return;
+      hold.pointerId = event.pointerId;
+      try {
+        holdButton.setPointerCapture(event.pointerId);
+      } catch (_) {}
     }
 
     async function beginHold(event) {
-      if (event.type === "pointerdown" && event.pointerType === "mouse" && event.button !== 0) return;
-      if (!state.token || holdButton.disabled || hold.pressed || hold.startInFlight || hold.active) return;
+      if (event.type === "pointerdown"
+          && event.pointerType === "mouse"
+          && event.button !== 0) return;
+      if (!state.token || holdButton.disabled || isHoldEngaged()) return;
       event.preventDefault();
-      if (event.type === "pointerdown") {
-        hold.pointerId = event.pointerId;
-        try { holdButton.setPointerCapture(event.pointerId); } catch (_) {}
-      }
+      captureHoldPointer(event);
 
       hold.pressed = true;
       hold.startInFlight = true;
@@ -610,41 +1031,51 @@
       const requestId = hold.requestId;
       renderHoldButton();
       try {
-        const response = await fetch("/v1/hold/start", {
-          method: "POST", headers: requestHeaders(true), cache: "no-store",
-          body: JSON.stringify({ request_id: requestId })
+        const payload = await apiRequest("/v1/hold/start", {
+          method: "POST",
+          payload: { request_id: requestId }
         });
-        const payload = await parseResponse(response);
-        if (payload.accepted !== true || payload.request_id !== requestId ||
-            payload.watering_mode !== "HOLD" || payload.lease_ms !== HOLD_LEASE_MS ||
-            payload.max_run_ms !== HOLD_MAX_RUN_MS) {
+        if (payload.accepted !== true
+            || payload.request_id !== requestId
+            || payload.watering_mode !== "HOLD"
+            || payload.lease_ms !== HOLD_LEASE_MS
+            || payload.max_run_ms !== HOLD_MAX_RUN_MS) {
           throw ambiguousAcceptance();
         }
         hold.startInFlight = false;
-        if (!hold.pressed) await releaseHold("released-before-start", true, true);
-        else {
+        if (!hold.pressed) {
+          await releaseHold({ force: true });
+        } else {
           hold.active = true;
           renderHoldButton();
           scheduleHoldHeartbeat();
-          showToast("押している間の給水を開始しました。指を離すと停止します。");
+          showToast("押している間の給水を開始しました。離すと停止します。");
           await refreshStatus();
         }
       } catch (error) {
-        hold.startInFlight = false;
-        hold.pressed = false;
-        hold.active = false;
-        clearHoldHeartbeat();
-        const ambiguous = error instanceof TypeError || error.ambiguous;
-        if (ambiguous) await releaseHold("ambiguous-start", true, true);
-        else {
-          hold.requestId = "";
-          renderHoldButton();
-        }
-        showToast(ambiguous
-          ? "押下給水の開始結果が不明です。停止命令を送り、ATOMの1.5秒タイマーでも停止します。"
-          : `押下給水を開始できませんでした: ${error.code || error.message}`, true);
-        await refreshStatus();
+        await handleHoldStartFailure(error);
       }
+    }
+
+    async function handleHoldStartFailure(error) {
+      hold.startInFlight = false;
+      hold.pressed = false;
+      hold.active = false;
+      clearHoldHeartbeat();
+      const ambiguous = error instanceof TypeError || error.ambiguous;
+      if (ambiguous) {
+        await releaseHold({ force: true });
+      } else {
+        hold.requestId = "";
+        renderHoldButton();
+      }
+      showToast(
+        ambiguous
+          ? "押下給水の開始結果が不明です。停止命令を送り、ATOMの1.5秒タイマーでも停止します。"
+          : `押下給水を開始できませんでした: ${error.code || error.message}`,
+        true
+      );
+      await refreshStatus();
     }
 
     async function sendHoldHeartbeat() {
@@ -652,13 +1083,13 @@
       hold.keepaliveInFlight = true;
       let failure = null;
       try {
-        const response = await fetch("/v1/hold/keepalive", {
-          method: "POST", headers: requestHeaders(true), cache: "no-store",
-          body: JSON.stringify({ request_id: hold.requestId })
+        const payload = await apiRequest("/v1/hold/keepalive", {
+          method: "POST",
+          payload: { request_id: hold.requestId }
         });
-        const payload = await parseResponse(response);
-        if (payload.renewed !== true || payload.request_id !== hold.requestId ||
-            payload.lease_ms !== HOLD_LEASE_MS) {
+        if (payload.renewed !== true
+            || payload.request_id !== hold.requestId
+            || payload.lease_ms !== HOLD_LEASE_MS) {
           throw ambiguousAcceptance();
         }
       } catch (error) {
@@ -668,8 +1099,11 @@
       }
 
       if (failure) {
-        await releaseHold("keepalive-failed", true, true);
-        showToast("生存確認に失敗したため停止しました。ATOM側でも1.5秒以内に物理停止します。", true);
+        await releaseHold({ force: true });
+        showToast(
+          "生存確認に失敗したため停止しました。ATOM側でも1.5秒以内に物理停止します。",
+          true
+        );
         await refreshStatus();
         return;
       }
@@ -678,50 +1112,97 @@
 
     function releasePointerHold(event) {
       if (hold.pointerId !== null && event.pointerId !== hold.pointerId) return;
-      void releaseHold(event.type, true);
+      void releaseHold();
     }
 
     tokenForm.addEventListener("submit", async (event) => {
-      event.preventDefault(); $("auth-error").textContent = "接続しています…";
-      state.token = $("api-token").value.trim();
+      event.preventDefault();
+      const token = $("api-token").value.trim();
+      if (token.length < 32 || token.length > 256) {
+        $("auth-error").textContent = "32〜256文字のトークンを入力してください。";
+        return;
+      }
+      $("auth-error").textContent = "接続しています…";
+      state.token = token;
       sessionStorage.setItem(TOKEN_KEY, state.token);
       await refreshStatus();
       $("api-token").value = "";
     });
+
     durationSlider.addEventListener("input", () => setDuration(durationSlider.value));
-    durationNumber.addEventListener("change", () => setDuration(durationNumber.value));
-    document.querySelectorAll(".preset").forEach((button) => button.addEventListener("click", () => setDuration(button.dataset.sec)));
-    $("water-button").addEventListener("click", () => { const duration = setDuration(durationSlider.value); $("dialog-duration").textContent = duration >= 60 ? `${Math.floor(duration / 60)}分${duration % 60 ? `${duration % 60}秒` : ""}` : `${duration}秒`; waterDialog.showModal(); });
+    durationNumber.addEventListener("input", () => {
+      if (durationNumber.value !== "") setDuration(durationNumber.value);
+    });
+    document.querySelectorAll(".preset").forEach((button) => {
+      button.addEventListener("click", () => setDuration(button.dataset.sec));
+    });
+    $("water-button").addEventListener("click", () => {
+      const duration = setDuration(durationSlider.value);
+      $("dialog-duration").textContent = duration >= 60
+        ? `${Math.floor(duration / 60)}分${duration % 60 ? `${duration % 60}秒` : ""}`
+        : `${duration}秒`;
+      waterDialog.showModal();
+    });
     $("cancel-water").addEventListener("click", () => waterDialog.close());
     $("confirm-water").addEventListener("click", startWatering);
+
     holdButton.addEventListener("pointerdown", beginHold);
     holdButton.addEventListener("pointerup", releasePointerHold);
     holdButton.addEventListener("pointercancel", releasePointerHold);
     holdButton.addEventListener("lostpointercapture", releasePointerHold);
     holdButton.addEventListener("contextmenu", (event) => event.preventDefault());
-    holdButton.addEventListener("blur", () => { void releaseHold("button-blur", true); });
+    holdButton.addEventListener("blur", () => { void releaseHold(); });
     holdButton.addEventListener("keydown", (event) => {
-      if ((event.key === " " || event.key === "Enter") && !event.repeat) void beginHold(event);
+      if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+        void beginHold(event);
+      }
     });
     holdButton.addEventListener("keyup", (event) => {
       if (event.key === " " || event.key === "Enter") {
         event.preventDefault();
-        void releaseHold("keyup", true);
+        void releaseHold();
       }
     });
+
     $("stop-button").addEventListener("click", () => {
-      const holdEngaged = hold.pressed || hold.startInFlight || hold.active || Boolean(hold.requestId);
-      if (holdEngaged) void releaseHold("emergency-button", false, true, false);
-      else void stopWatering();
+      if (hasHoldContext()) {
+        void releaseHold({ keepalive: false, force: true, silent: false });
+      } else {
+        void stopWatering();
+      }
     });
-    window.addEventListener("blur", () => { void releaseHold("blur", true); });
+    window.addEventListener("blur", () => { void releaseHold(); });
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") void releaseHold("hidden", true);
+      if (document.visibilityState === "hidden") void releaseHold();
     });
-    window.addEventListener("pagehide", () => { void releaseHold("pagehide", true); });
-    $("calibrate-dry").addEventListener("click", () => { if (state.adc === null) return showToast("センサー値を取得できていません。", true); calibration.dryAdc = state.adc; saveCalibration(); showToast("現在値を乾燥点として保存しました。"); });
-    $("calibrate-wet").addEventListener("click", () => { if (state.adc === null) return showToast("センサー値を取得できていません。", true); calibration.wetAdc = state.adc; saveCalibration(); showToast("現在値を湿潤点として保存しました。"); });
-    $("reset-calibration").addEventListener("click", () => { calibration = { dryAdc: null, wetAdc: null }; localStorage.removeItem(CALIBRATION_KEY); renderMoisture(); showToast("校正値をリセットしました。"); });
+    window.addEventListener("pagehide", () => { void releaseHold(); });
+
+    $("calibrate-dry").addEventListener("click", () => {
+      if (state.adc === null) return showToast("センサー値を取得できていません。", true);
+      if (state.adc === calibration.wetAdc) {
+        return showToast("湿潤点と同じ値です。別の状態で設定してください。", true);
+      }
+      calibration.dryAdc = state.adc;
+      saveCalibration();
+      renderMoisture();
+      showToast("現在値を乾燥点として保存しました。");
+    });
+    $("calibrate-wet").addEventListener("click", () => {
+      if (state.adc === null) return showToast("センサー値を取得できていません。", true);
+      if (state.adc === calibration.dryAdc) {
+        return showToast("乾燥点と同じ値です。別の状態で設定してください。", true);
+      }
+      calibration.wetAdc = state.adc;
+      saveCalibration();
+      renderMoisture();
+      showToast("現在値を湿潤点として保存しました。");
+    });
+    $("reset-calibration").addEventListener("click", () => {
+      calibration = { dryAdc: null, wetAdc: null };
+      localStorage.removeItem(CALIBRATION_KEY);
+      renderMoisture();
+      showToast("校正値をリセットしました。");
+    });
 
     setDuration(10);
     if (state.token) refreshStatus(); else authGate.hidden = false;

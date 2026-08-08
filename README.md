@@ -136,10 +136,10 @@ codes, and the optional systemd timer.
   native tests.
 - Bridge behavior, SQLite transitions, HTTP handling, and no-retry semantics
   have automated tests.
-- Firmware v0.1 was physically flashed and verified for boot guard, authentication,
-  unarmed refusal, one 10-second dose, and local `DOSE_COMPLETE` stop. The v0.2
-  variable-duration API and embedded dashboard are built and browser-tested but
-  still require the next USB flash and physical commissioning run.
+- Firmware v0.3 was physically flashed and verified for boot guard, authentication,
+  bounded one-shot watering, dead-man hold lease expiry, keepalive, manual stop,
+  and local pump-off behavior. The v0.4 dashboard refresh is automated-test and
+  browser verified; physical operation still uses the unchanged v0.3 safety paths.
 - Measured flow, waterproofing, power endurance, drainage, siphon behavior, and
   the supervised pilot remain incomplete.
 - Automatic scheduling remains disabled by default.

@@ -6,7 +6,7 @@
 #define API_TOKEN "CHANGE_ME_TO_AT_LEAST_32_RANDOM_ASCII_CHARACTERS"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.3.0"
+#define FIRMWARE_VERSION "0.4.0"
 
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
