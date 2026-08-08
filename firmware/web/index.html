@@ -39,8 +39,6 @@
       line-height: 1.55;
       -webkit-font-smoothing: antialiased;
     }
-    body.auth-locked { overflow: hidden; }
-    body.auth-locked .shell { visibility: hidden; }
     button, input { font: inherit; }
     button { min-height: 44px; }
     button, summary, input[type="range"] { -webkit-tap-highlight-color: transparent; }
@@ -273,41 +271,6 @@
     }
     .offline-banner.show { display: block; }
 
-    .auth-gate {
-      position: fixed;
-      inset: 0;
-      z-index: 100;
-      display: grid;
-      place-items: center;
-      padding: 20px;
-      overflow-y: auto;
-      background: rgba(242, 243, 239, .96);
-    }
-    .auth-card {
-      width: min(400px, 100%);
-      padding: 28px;
-      border: 1px solid var(--line-strong);
-      border-radius: 14px;
-      background: var(--surface);
-      box-shadow: 0 20px 55px rgba(24, 32, 28, .12);
-    }
-    .auth-code { margin-bottom: 22px; color: var(--green-dark); font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
-    .auth-card h2 { margin: 0; font-size: 22px; letter-spacing: -.025em; }
-    .auth-card p { margin: 8px 0 20px; color: var(--muted); font-size: 13px; }
-    .auth-card label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
-    .auth-card input {
-      width: 100%;
-      min-height: 46px;
-      padding: 10px 12px;
-      border: 1px solid var(--line-strong);
-      border-radius: 9px;
-      background: var(--surface);
-      color: var(--ink);
-    }
-    .auth-card input::placeholder { color: #707772; }
-    .auth-card .primary-button { margin-top: 16px; }
-    .auth-error { min-height: 20px; margin: 8px 0 0 !important; color: var(--red) !important; }
-    .auth-error:empty { display: none; }
 
     dialog {
       width: min(430px, calc(100% - 32px));
@@ -374,7 +337,7 @@
     }
   </style>
 </head>
-<body class="auth-locked">
+<body>
   <div class="shell">
     <header class="site-header">
       <div class="site-title">
@@ -389,7 +352,7 @@
       </div>
     </header>
 
-    <main class="dashboard-main" id="dashboard-main" inert>
+    <main class="dashboard-main" id="dashboard-main">
       <div class="offline-banner" id="offline-banner" role="alert">
         デバイスから応答がありません。停止ボタンは送信できますが、現物のポンプも確認してください。
       </div>
@@ -434,7 +397,7 @@
               </div>
             </div>
             <input id="duration-sec" type="range" min="1" max="180" value="10" aria-label="給水秒数">
-            <div class="presets" aria-label="給水時間プリセット">
+            <div class="presets" role="group" aria-label="給水時間プリセット">
               <button type="button" class="preset active" data-sec="10">10秒</button>
               <button type="button" class="preset" data-sec="30">30秒</button>
               <button type="button" class="preset" data-sec="60">1分</button>
@@ -516,17 +479,6 @@
     </main>
   </div>
 
-  <div class="auth-gate" id="auth-gate">
-    <form class="auth-card" id="token-form">
-      <div class="auth-code">TREE 01</div>
-      <h2>デバイスに接続</h2>
-      <p>ATOM LiteのAPIトークンを入力します。このタブを閉じると消去されます。</p>
-      <label for="api-token">APIトークン</label>
-      <input id="api-token" type="password" minlength="32" maxlength="256" placeholder="32文字以上のAPIトークン" autocomplete="off" required>
-      <p class="auth-error" id="auth-error" role="alert"></p>
-      <button type="submit" class="primary-button">接続</button>
-    </form>
-  </div>
 
   <dialog id="water-dialog" aria-labelledby="dialog-title">
     <div class="dialog-body">
@@ -546,7 +498,6 @@
   <script>
     "use strict";
 
-    const TOKEN_KEY = "watering-api-token-v1";
     const CALIBRATION_KEY = "watering-moisture-calibration-v1";
     // Fail-closed client expectations intentionally mirror firmware constants.
     const HOLD_HEARTBEAT_MS = 500;
@@ -561,7 +512,6 @@
     };
 
     const state = {
-      token: sessionStorage.getItem(TOKEN_KEY) || "",
       status: null,
       adc: null,
       history: [],
@@ -579,8 +529,6 @@
     };
 
     const $ = (id) => document.getElementById(id);
-    const authGate = $("auth-gate");
-    const tokenForm = $("token-form");
     const waterDialog = $("water-dialog");
     const durationSlider = $("duration-sec");
     const durationNumber = $("duration-number");
@@ -606,7 +554,6 @@
 
     function requestHeaders(json = false) {
       const headers = {
-        "Authorization": `Bearer ${state.token}`,
         "Accept": "application/json"
       };
       if (json) headers["Content-Type"] = "application/json";
@@ -639,13 +586,12 @@
     }
 
     async function refreshStatus() {
-      if (!state.token) return;
       const requestSequence = ++statusRequestSequence;
       try {
         const payload = await apiRequest("/v1/status");
         if (requestSequence !== statusRequestSequence) return;
         acceptStatus(payload);
-        unlockDashboard();
+        $("offline-banner").classList.remove("show");
         setConnection("online", "接続中");
         render();
       } catch (error) {
@@ -675,23 +621,7 @@
       }
     }
 
-    function unlockDashboard() {
-      authGate.hidden = true;
-      document.body.classList.remove("auth-locked");
-      $("dashboard-main").inert = false;
-      $("offline-banner").classList.remove("show");
-    }
-
     function handleStatusError(error) {
-      if (error.status === 401) {
-        state.token = "";
-        sessionStorage.removeItem(TOKEN_KEY);
-        authGate.hidden = false;
-        document.body.classList.add("auth-locked");
-        $("dashboard-main").inert = true;
-        $("auth-error").textContent = "トークンを確認してください。";
-        return;
-      }
       setConnection("error", "応答なし", false);
       $("offline-banner").classList.add("show");
       $("armed-state").textContent = "状態不明";
@@ -848,7 +778,7 @@
 
     function disableActions() {
       $("water-button").disabled = true;
-      $("stop-button").disabled = !state.token;
+      $("stop-button").disabled = false;
       $("stop-button").textContent = "停止を送信";
       holdButton.disabled = !isHoldEngaged();
       renderHoldButton();
@@ -1021,7 +951,7 @@
       if (event.type === "pointerdown"
           && event.pointerType === "mouse"
           && event.button !== 0) return;
-      if (!state.token || holdButton.disabled || isHoldEngaged()) return;
+      if (holdButton.disabled || isHoldEngaged()) return;
       event.preventDefault();
       captureHoldPointer(event);
 
@@ -1115,19 +1045,6 @@
       void releaseHold();
     }
 
-    tokenForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const token = $("api-token").value.trim();
-      if (token.length < 32 || token.length > 256) {
-        $("auth-error").textContent = "32〜256文字のトークンを入力してください。";
-        return;
-      }
-      $("auth-error").textContent = "接続しています…";
-      state.token = token;
-      sessionStorage.setItem(TOKEN_KEY, state.token);
-      await refreshStatus();
-      $("api-token").value = "";
-    });
 
     durationSlider.addEventListener("input", () => setDuration(durationSlider.value));
     durationNumber.addEventListener("input", () => {
@@ -1205,7 +1122,8 @@
     });
 
     setDuration(10);
-    if (state.token) refreshStatus(); else authGate.hidden = false;
+    disableActions();
+    refreshStatus();
     setInterval(refreshStatus, 2000);
   </script>
 </body>

@@ -32,7 +32,6 @@ using watering::State;
 using watering::WateringController;
 
 constexpr uint16_t kHttpPort = 80U;
-constexpr std::size_t kTokenMaxLength = 256U;
 constexpr std::size_t kMaximumRequestBodyBytes = 256U;
 constexpr std::size_t kMoistureSampleCount = 9U;
 static_assert(kMoistureSampleCount <= watering::kMaximumMedianSamples);
@@ -75,23 +74,8 @@ bool has_placeholder(const char* value) {
          text.indexOf("REPLACE_ME") >= 0;
 }
 
-bool secret_config_valid() {
-  if (has_placeholder(WIFI_SSID) || has_placeholder(WIFI_PASSWORD) ||
-      has_placeholder(API_TOKEN)) {
-    return false;
-  }
-  const std::size_t token_length = strlen(API_TOKEN);
-  if (token_length < 32U || token_length > kTokenMaxLength) {
-    return false;
-  }
-  for (std::size_t index = 0U; index < token_length; ++index) {
-    const unsigned char character =
-        static_cast<unsigned char>(API_TOKEN[index]);
-    if (character < 32U || character > 126U) {
-      return false;
-    }
-  }
-  return true;
+bool wifi_config_valid() {
+  return !has_placeholder(WIFI_SSID) && !has_placeholder(WIFI_PASSWORD);
 }
 
 ControllerConfig build_controller_config() {
@@ -244,25 +228,6 @@ void send_error(int status, const char* code) {
   send_json(status, response);
 }
 
-bool authorized() {
-  const String header = server.header("Authorization");
-  constexpr char kPrefix[] = "Bearer ";
-  if (!header.startsWith(kPrefix)) {
-    return false;
-  }
-  const String supplied = header.substring(sizeof(kPrefix) - 1U);
-  return watering::constant_time_equals(supplied.c_str(), API_TOKEN,
-                                        kTokenMaxLength);
-}
-
-bool require_authorization() {
-  if (authorized()) {
-    return true;
-  }
-  send_error(401, "unauthorized");
-  return false;
-}
-
 void handle_health() {
   JsonDocument response;
   response["ok"] = true;
@@ -288,9 +253,6 @@ void handle_dashboard() {
 }
 
 void handle_status() {
-  if (!require_authorization()) {
-    return;
-  }
   const uint32_t now = millis();
   JsonDocument response;
   response["state"] = watering::state_name(controller->state());
@@ -322,9 +284,6 @@ void handle_status() {
 }
 
 void handle_water() {
-  if (!require_authorization()) {
-    return;
-  }
   const String body = server.arg("plain");
   if (body.length() == 0U || body.length() > kMaximumRequestBodyBytes) {
     send_error(body.length() == 0U ? 400 : 413, "invalid_request_body");
@@ -408,9 +367,6 @@ bool parse_hold_request_id(String& request_id) {
 }
 
 void handle_hold_start() {
-  if (!require_authorization()) {
-    return;
-  }
   String request_id;
   if (!parse_hold_request_id(request_id)) {
     return;
@@ -456,9 +412,6 @@ void handle_hold_start() {
 }
 
 void handle_hold_keepalive() {
-  if (!require_authorization()) {
-    return;
-  }
   String request_id;
   if (!parse_hold_request_id(request_id)) {
     return;
@@ -492,9 +445,6 @@ void handle_hold_keepalive() {
 }
 
 void handle_stop() {
-  if (!require_authorization()) {
-    return;
-  }
   controller->stop(millis());
   apply_pump_output();
   success_led_until = millis() + kSuccessLedMs;
@@ -507,8 +457,6 @@ void handle_stop() {
 }
 
 void configure_http_server() {
-  const char* headers[] = {"Authorization"};
-  server.collectHeaders(headers, 1U);
   server.on("/", HTTP_GET, handle_dashboard);
   server.on("/healthz", HTTP_GET, handle_health);
   server.on("/v1/status", HTTP_GET, handle_status);
@@ -612,13 +560,13 @@ void setup() {
 
   controller.reset(new WateringController(
       build_controller_config(), millis(), restored_request_id.c_str()));
-  network_config_valid = secret_config_valid();
+  network_config_valid = wifi_config_valid();
   if (!pump_safety_timer_ready) {
     controller->set_error("SAFETY_TIMER_INIT_FAILED", millis());
   } else if (!preferences_ready) {
     controller->set_error("NVS_OPEN_FAILED", millis());
   } else if (!network_config_valid) {
-    controller->set_error("INVALID_SECRET_CONFIG", millis());
+    controller->set_error("INVALID_WIFI_CONFIG", millis());
   }
   apply_pump_output();
 

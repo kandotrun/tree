@@ -172,7 +172,7 @@ class WateringService:
             acceptance = self.client.water(request_id)
         except AtomHTTPError as exc:
             detail = f"HTTP {exc.status}: {exc.code}"
-            if exc.status in {400, 401, 413, 423}:
+            if exc.status in {400, 413, 423}:
                 self.store.mark_rejected(request_id, detail=detail)
                 return {
                     "ok": False,

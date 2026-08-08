@@ -85,14 +85,14 @@ def test_cli_reports_configuration_errors_as_json(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def fail() -> FakeService:
-        raise ConfigError("ATOM_API_TOKEN is required")
+        raise ConfigError("DOSE_ML is required")
 
     monkeypatch.setattr(cli, "build_service", fail)
 
     assert cli.main(["status"]) == 2
     result = read_output(capsys)
     assert result["result"] == "CONFIG_ERROR"
-    assert "ATOM_API_TOKEN" in str(result["message_ja"])
+    assert "DOSE_ML" in str(result["message_ja"])
 
 
 def test_cli_reports_pre_dispatch_database_errors_without_traceback(

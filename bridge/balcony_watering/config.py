@@ -17,7 +17,6 @@ class ConfigError(ValueError):
 
 
 _LOCAL_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
-_PLACEHOLDERS = ("CHANGE_ME", "REPLACE_ME", "PLACEHOLDER")
 
 
 def _required(mapping: Mapping[str, str], key: str) -> str:
@@ -82,7 +81,6 @@ def _validate_atom_url(raw: str) -> str:
 @dataclass(frozen=True, slots=True)
 class Settings:
     atom_url: str
-    atom_api_token: str
     dose_ml: int
     tank_usable_ml: int
     low_tank_doses: int
@@ -96,19 +94,6 @@ class Settings:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, str]) -> Settings:
         atom_url = _validate_atom_url(_required(mapping, "ATOM_URL"))
-        token = _required(mapping, "ATOM_API_TOKEN")
-        if any(marker in token.upper() for marker in _PLACEHOLDERS):
-            raise ConfigError("ATOM_API_TOKEN is still a placeholder")
-        if len(token.encode("utf-8")) < 32:
-            raise ConfigError("ATOM_API_TOKEN must be at least 32 bytes")
-        if (
-            len(token) > 256
-            or not token.isascii()
-            or not token.isprintable()
-            or token.strip() != token
-        ):
-            raise ConfigError("ATOM_API_TOKEN must be 32-256 printable ASCII characters")
-
         dose_ml = _positive_int(mapping, "DOSE_ML")
         tank_usable_ml = _positive_int(mapping, "TANK_USABLE_ML")
         if tank_usable_ml < dose_ml:
@@ -131,7 +116,6 @@ class Settings:
 
         return cls(
             atom_url=atom_url,
-            atom_api_token=token,
             dose_ml=dose_ml,
             tank_usable_ml=tank_usable_ml,
             low_tank_doses=low_tank_doses,

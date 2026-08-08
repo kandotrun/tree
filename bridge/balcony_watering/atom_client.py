@@ -56,7 +56,6 @@ class AtomClient:
     def __init__(
         self,
         base_url: str,
-        api_token: str,
         *,
         connect_timeout_sec: float,
         request_timeout_sec: float,
@@ -68,7 +67,6 @@ class AtomClient:
         self._port = parsed.port or 80
         display_host = f"[{self._host}]" if ":" in self._host else self._host
         self._host_header = display_host if self._port == 80 else f"{display_host}:{self._port}"
-        self._token = api_token
         self._connect_timeout_sec = connect_timeout_sec
         self._request_timeout_sec = request_timeout_sec
 
@@ -113,7 +111,6 @@ class AtomClient:
         path: str,
         *,
         expected_status: int,
-        authenticated: bool,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         body = None
@@ -123,8 +120,6 @@ class AtomClient:
             "Connection": "close",
             "Host": self._host_header,
         }
-        if authenticated:
-            headers["Authorization"] = f"Bearer {self._token}"
         if payload is not None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -165,7 +160,6 @@ class AtomClient:
             "GET",
             "/healthz",
             expected_status=200,
-            authenticated=False,
         )
 
     @staticmethod
@@ -190,9 +184,7 @@ class AtomClient:
             return
         request_id = payload["last_request_id"]
         valid = request_id == "" or (
-            isinstance(request_id, str)
-            and _REQUEST_ID_RE.fullmatch(request_id) is not None
-            and request_id != self._token
+            isinstance(request_id, str) and _REQUEST_ID_RE.fullmatch(request_id) is not None
         )
         if not valid:
             raise AtomProtocolError("ATOM status last_request_id was invalid")
@@ -212,7 +204,6 @@ class AtomClient:
                 or len(value) > 31
                 or not value.isascii()
                 or not value.isprintable()
-                or value == self._token
             ):
                 raise AtomProtocolError(f"ATOM status {field} was invalid")
             sanitized[field] = value
@@ -222,7 +213,6 @@ class AtomClient:
             "GET",
             "/v1/status",
             expected_status=200,
-            authenticated=True,
         )
         state = payload.get("state")
         pump = payload.get("pump")
@@ -254,7 +244,6 @@ class AtomClient:
             "POST",
             "/v1/water",
             expected_status=202,
-            authenticated=True,
             payload=payload,
         )
 
@@ -263,7 +252,6 @@ class AtomClient:
             "POST",
             "/v1/stop",
             expected_status=200,
-            authenticated=True,
             payload={},
         )
         stopped = payload.get("stopped")

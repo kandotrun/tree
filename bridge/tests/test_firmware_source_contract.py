@@ -4,6 +4,47 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MAIN = ROOT / "firmware" / "src" / "main.cpp"
+CONFIG_EXAMPLE = ROOT / "firmware" / "include" / "config.example.h"
+FORBIDDEN_AUTH_MARKERS = (
+    "401",
+    "API_TOKEN",
+    "Authorization",
+    "Bearer",
+    "X-API-Key",
+    "X-Auth-Token",
+    "authenticate",
+    "authorized",
+    "collectHeaders",
+    "hasHeader",
+    "unauthorized",
+)
+
+
+def _handler_source(source: str, name: str, next_name: str) -> str:
+    start = source.index(f"void {name}()")
+    end = source.index(f"void {next_name}()", start)
+    return source[start:end]
+
+
+def test_http_api_has_no_application_authentication() -> None:
+    source = MAIN.read_text(encoding="utf-8")
+    config = CONFIG_EXAMPLE.read_text(encoding="utf-8")
+
+    for marker in FORBIDDEN_AUTH_MARKERS:
+        assert marker not in source
+        assert marker not in config
+
+    handlers = (
+        ("handle_status", "handle_water"),
+        ("handle_water", "handle_hold_start"),
+        ("handle_hold_start", "handle_hold_keepalive"),
+        ("handle_hold_keepalive", "handle_stop"),
+        ("handle_stop", "configure_http_server"),
+    )
+    for name, next_name in handlers:
+        handler = _handler_source(source, name, next_name)
+        for marker in FORBIDDEN_AUTH_MARKERS:
+            assert marker not in handler
 
 
 def test_independent_pump_timer_uses_the_accepted_request_duration() -> None:
