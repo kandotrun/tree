@@ -696,6 +696,7 @@
     holdButton.addEventListener("pointercancel", releasePointerHold);
     holdButton.addEventListener("lostpointercapture", releasePointerHold);
     holdButton.addEventListener("contextmenu", (event) => event.preventDefault());
+    holdButton.addEventListener("blur", () => { void releaseHold("button-blur", true); });
     holdButton.addEventListener("keydown", (event) => {
       if ((event.key === " " || event.key === "Enter") && !event.repeat) void beginHold(event);
     });

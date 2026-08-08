@@ -154,6 +154,7 @@ def test_hold_release_paths_stop_and_never_overlap_heartbeats() -> None:
     assert 'holdButton.addEventListener("pointerup"' in source
     assert 'holdButton.addEventListener("pointercancel"' in source
     assert 'holdButton.addEventListener("lostpointercapture"' in source
+    assert 'holdButton.addEventListener("blur"' in source
     assert 'window.addEventListener("blur"' in source
     assert 'document.addEventListener("visibilitychange"' in source
     assert 'window.addEventListener("pagehide"' in source

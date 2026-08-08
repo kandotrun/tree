@@ -925,6 +925,16 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 - [ ] 1-180秒の境界値検証
 - [ ] 机上試験合格
 
+### Firmware v0.3.0
+
+- [ ] `/v1/hold/start`が固定1,500msリースと600,000ms上限を返す
+- [ ] 同一`request_id`のkeepaliveだけが有効なHOLDを延長する
+- [ ] 別ID、停止後、DOSE中のkeepaliveがポンプを開始・再開しない
+- [ ] keepalive停止から1,500ms以内に独立タイマーがGPIO26をLOWにする
+- [ ] pointer release、cancel、capture喪失、button/window blur、画面非表示で停止する
+- [ ] 状態機械テストで180秒超の継続と600,000ms絶対停止を確認する
+- [ ] 実機では短時間holdとリース失効だけを試し、流量校正前に180秒超を実給水しない
+
 ### Bridge v0.1.0
 
 - [ ] `water-tree`
