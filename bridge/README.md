@@ -1,8 +1,8 @@
 # Balcony Watering Bridge
 
-The bridge turns a small, fixed command surface into LAN-only requests
-to the ATOM Lite. It records every attempted dose in SQLite and prints exactly
-one JSON object for Hermes or another caller.
+The bridge turns small, fixed command surfaces into LAN-only requests to the
+ATOM Lite. It provides JSON CLI commands for Hermes and a loopback-only public
+gateway for a Cloudflare Tunnel running on the same NAS.
 
 ## Safety behavior
 
@@ -23,6 +23,13 @@ one JSON object for Hermes or another caller.
   first dose automatically.
 - Reservation, unresolved-event exclusion, and the scheduler's latest-success
   check are committed in one SQLite transaction.
+- The anonymous public endpoint fixes every request to 10 seconds, never exposes
+  hold mode or a duration field, and atomically applies a global 60-second
+  cooldown plus rolling six-per-hour and 24-per-day limits.
+- A public POST with an ambiguous result is sent exactly once and remains
+  `UNKNOWN`, consuming quota. A definitive 4xx rejection releases the reservation.
+- The public HTTP listener accepts loopback only. A foreign browser Origin and
+  simple cross-site form content type are rejected before a device request.
 
 ## Development
 
@@ -57,10 +64,31 @@ and accepts an optional bounded `duration_sec`, but the shipped bridge service,
 CLI, and Hermes commands do not expose or send it. Firmware therefore uses
 `DOSE_MS` for every bridge-triggered dose.
 The ATOM API intentionally has no application-layer authentication and does not
-terminate TLS. Any client that can reach it can issue pump commands. Use a
-trusted WPA2/WPA3 LAN or isolated IoT VLAN with no guest clients, never expose
-the API through public ingress, and rotate Wi-Fi credentials if LAN access may
-be compromised.
+terminate TLS. Use a trusted WPA2/WPA3 LAN or isolated IoT VLAN. Never expose
+the ATOM itself through public ingress. Anonymous Internet access must terminate
+at `tree-public-gateway`, which forwards only the bounded surface above.
+
+## NAS public gateway
+
+Copy [`public.example.env`](public.example.env) to a mode-600 runtime file and
+set `PUBLIC_ORIGIN` to the public HTTPS origin. Start
+`tree-public-gateway` with the included user service, then run cloudflared with
+the separate `tree-public-tunnel.service`. Both services are intended for a
+long-running NAS account with user lingering enabled; neither requires Docker or
+root at runtime.
+
+See [`../docs/public-gateway.md`](../docs/public-gateway.md) for the directory
+layout, Tunnel configuration, external verification, and rollback. Do not enable
+the public route until `GET /api/status` reports `IDLE`, `armed=true`, and
+`pump=false`.
+
+## Moisture telemetry
+
+The package also installs `tree-moisture-logger`, a read-only status poller that
+stores ADC and device-state history in SQLite. It never invokes water, stop,
+hold, or scheduling endpoints, and its ADC records must not trigger automatic
+watering. See [`../docs/moisture-telemetry.md`](../docs/moisture-telemetry.md)
+for the NAS user service, retention, verification, and shutdown procedure.
 
 ## Production install
 

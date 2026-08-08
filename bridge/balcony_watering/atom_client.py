@@ -8,6 +8,7 @@ import socket
 from typing import Any
 from urllib.parse import urlsplit
 
+from . import __version__
 from .network_policy import is_allowed_local_address
 
 
@@ -35,6 +36,7 @@ _STATUS_INTEGER_FIELDS = {
     "last_runtime_ms": (0, 0xFFFFFFFF),
 }
 _STATUS_TEXT_FIELDS = ("last_stop_reason", "error_reason", "firmware_version")
+_STATUS_BOOLEAN_FIELDS = ("armed",)
 
 
 class AtomHTTPError(AtomError):
@@ -116,7 +118,7 @@ class AtomClient:
         body = None
         headers = {
             "Accept": "application/json",
-            "User-Agent": "balcony-watering-bridge/0.1.0",
+            "User-Agent": f"balcony-watering-bridge/{__version__}",
             "Connection": "close",
             "Host": self._host_header,
         }
@@ -222,6 +224,13 @@ class AtomClient:
             raise AtomProtocolError("ATOM status pump flag was invalid")
 
         sanitized: dict[str, Any] = {"state": state, "pump": pump}
+        for field in _STATUS_BOOLEAN_FIELDS:
+            if field not in payload:
+                continue
+            value = payload[field]
+            if type(value) is not bool:
+                raise AtomProtocolError(f"ATOM status {field} was invalid")
+            sanitized[field] = value
         self._copy_status_integers(payload, sanitized)
         self._copy_status_request_id(payload, sanitized)
         self._copy_status_text(payload, sanitized)

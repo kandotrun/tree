@@ -78,6 +78,54 @@ def _validate_atom_url(raw: str) -> str:
     return raw.rstrip("/")
 
 
+def _bounded_int(
+    mapping: Mapping[str, str],
+    key: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = str(mapping.get(key, default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} must be an integer") from exc
+    if not minimum <= value <= maximum:
+        raise ConfigError(f"{key} must be from {minimum} through {maximum}")
+    return value
+
+
+def _positive_float_default(
+    mapping: Mapping[str, str],
+    key: str,
+    default: float,
+) -> float:
+    raw = str(mapping.get(key, default)).strip()
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} must be a number") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ConfigError(f"{key} must be positive")
+    return value
+
+
+def _validate_public_origin(raw: str) -> str:
+    parsed = urlsplit(raw)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ConfigError("PUBLIC_ORIGIN must be an HTTPS origin")
+    if parsed.username or parsed.password:
+        raise ConfigError("PUBLIC_ORIGIN must not contain credentials")
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise ConfigError("PUBLIC_ORIGIN has an invalid port") from exc
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise ConfigError("PUBLIC_ORIGIN must contain the origin only")
+    return raw.rstrip("/")
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     atom_url: str
@@ -128,6 +176,90 @@ class Settings:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PublicSettings:
+    atom_url: str
+    database_path: Path
+    listen_host: str
+    listen_port: int
+    public_origin: str
+    duration_sec: int
+    cooldown_sec: int
+    hourly_limit: int
+    daily_limit: int
+    connect_timeout_sec: float
+    request_timeout_sec: float
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, str]) -> PublicSettings:
+        raw_database_path = str(
+            mapping.get("PUBLIC_DATABASE_PATH", "/var/lib/balcony-watering/public.db")
+        ).strip()
+        if not raw_database_path:
+            raise ConfigError("PUBLIC_DATABASE_PATH must not be empty")
+
+        listen_host = str(mapping.get("PUBLIC_LISTEN_HOST", "127.0.0.1")).strip()
+        if listen_host not in {"127.0.0.1", "::1"}:
+            raise ConfigError("PUBLIC_LISTEN_HOST must be a loopback address")
+
+        hourly_limit = _bounded_int(
+            mapping,
+            "PUBLIC_HOURLY_LIMIT",
+            default=6,
+            minimum=1,
+            maximum=6,
+        )
+        daily_limit = _bounded_int(
+            mapping,
+            "PUBLIC_DAILY_LIMIT",
+            default=24,
+            minimum=1,
+            maximum=24,
+        )
+        if daily_limit < hourly_limit:
+            raise ConfigError("PUBLIC_DAILY_LIMIT must be at least PUBLIC_HOURLY_LIMIT")
+
+        return cls(
+            atom_url=_validate_atom_url(_required(mapping, "ATOM_URL")),
+            database_path=Path(raw_database_path).expanduser(),
+            listen_host=listen_host,
+            listen_port=_bounded_int(
+                mapping,
+                "PUBLIC_LISTEN_PORT",
+                default=8787,
+                minimum=1,
+                maximum=65_535,
+            ),
+            public_origin=_validate_public_origin(_required(mapping, "PUBLIC_ORIGIN")),
+            duration_sec=_bounded_int(
+                mapping,
+                "PUBLIC_WATER_DURATION_SEC",
+                default=10,
+                minimum=10,
+                maximum=10,
+            ),
+            cooldown_sec=_bounded_int(
+                mapping,
+                "PUBLIC_COOLDOWN_SEC",
+                default=60,
+                minimum=60,
+                maximum=3_600,
+            ),
+            hourly_limit=hourly_limit,
+            daily_limit=daily_limit,
+            connect_timeout_sec=_positive_float_default(
+                mapping,
+                "ATOM_CONNECT_TIMEOUT_SEC",
+                3,
+            ),
+            request_timeout_sec=_positive_float_default(
+                mapping,
+                "ATOM_REQUEST_TIMEOUT_SEC",
+                5,
+            ),
+        )
+
+
 def _read_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -162,3 +294,16 @@ def load_settings(
     values = _read_env_file(selected_path)
     values.update(source)
     return Settings.from_mapping(values)
+
+
+def load_public_settings(
+    env_file: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> PublicSettings:
+    source = os.environ if environ is None else environ
+    selected_path = env_file
+    if selected_path is None:
+        selected_path = Path(source.get("PUBLIC_ENV_FILE", "/etc/tree-public.env"))
+    values = _read_env_file(selected_path)
+    values.update(source)
+    return PublicSettings.from_mapping(values)
