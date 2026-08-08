@@ -104,6 +104,7 @@ class WateringController {
   uint32_t active_duration_ms_;
   uint32_t last_runtime_ms_;
   WateringMode watering_mode_;
+  WateringMode last_watering_mode_;
   std::string last_request_id_;
   std::string last_stop_reason_;
   std::string error_reason_;

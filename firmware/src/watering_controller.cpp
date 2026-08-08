@@ -43,7 +43,8 @@ WateringController::WateringController(const ControllerConfig& config,
       hold_last_renewed_at_(boot_started_at),
       active_duration_ms_(config.dose_ms),
       last_runtime_ms_(0U),
-      watering_mode_(WateringMode::None) {
+      watering_mode_(WateringMode::None),
+      last_watering_mode_(WateringMode::None) {
   if (!valid_config()) {
     state_ = State::Error;
     error_reason_ = "INVALID_CONFIG";
@@ -102,7 +103,7 @@ void WateringController::remember_request(const char* request_id) {
 
 uint32_t WateringController::scheduled_ms() const {
   if (watering_mode_ == WateringMode::Hold ||
-      active_duration_ms_ == kHoldMaxRunMs) {
+      last_watering_mode_ == WateringMode::Hold) {
     return kHoldMaxRunMs;
   }
   return std::min(active_duration_ms_, config_.max_run_ms);
@@ -233,6 +234,7 @@ StartResult WateringController::start_with_duration(
   state_started_at_ = now;
   active_duration_ms_ = requested_duration_ms;
   watering_mode_ = mode;
+  last_watering_mode_ = mode;
   state_ = State::Watering;
   return StartResult::Accepted;
 }

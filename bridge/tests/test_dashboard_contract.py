@@ -111,6 +111,8 @@ def test_safety_controls_have_explicit_cross_browser_visual_states() -> None:
     assert "#duration-sec::-webkit-slider-thumb" in source
     assert "#duration-sec::-moz-range-thumb" in source
     assert ".stop-button:disabled { opacity: .62" in source
+    assert ".hold-button:focus-visible" in source
+    assert "outline-offset:" in source
 
 
 def test_emergency_stop_stays_available_when_status_refresh_fails() -> None:
@@ -161,6 +163,8 @@ def test_hold_release_paths_stop_and_never_overlap_heartbeats() -> None:
     assert "if (!hold.pressed) await releaseHold" in source
     assert 'body: "{}", keepalive' in source
     assert 'releaseHold("pagehide", true)' in source
+    assert "stopWatering({ silent, keepalive" in source
+    assert 'releaseHold("emergency-button", false, true, false)' in source
 
 
 def test_hold_control_preserves_the_one_shot_180_second_limit() -> None:

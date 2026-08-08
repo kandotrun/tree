@@ -41,8 +41,9 @@ machine-readable results.
   It sends a heartbeat every 500 ms; the ATOM's independent 1,500 ms lease
   timer cuts GPIO 26 LOW if heartbeats stop. A hold has a fixed ten-minute
   absolute cap, and its keepalive endpoint cannot start or restart watering.
-  M5Stack publishes a 5 W pump rating but no continuous-duty limit, so ten
-  minutes is provisional and must not be increased before heat, flow, and
+  Official M5Stack documentation states a manufacturer-rated 5 W pump, but
+  power draw and continuous duty have not been measured on this installed unit.
+  Ten minutes is provisional and must not be increased before heat, flow, and
   drainage are measured on the installed system.
 - The accepted request ID is persisted before the physical pump pin goes high.
 - The default cooldown is zero: after a dose completes or is manually stopped,

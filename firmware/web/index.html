@@ -123,6 +123,7 @@
     .hold-button small { margin-top: 4px; color: rgba(232,255,251,.68); font-size: 10px; font-weight: 650; }
     .hold-button.holding { color: #123d34; background: var(--water-pale); box-shadow: 0 0 0 4px rgba(188,229,223,.16); }
     .hold-button.holding small { color: rgba(18,61,52,.7); }
+    .hold-button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
     .hold-button:disabled { opacity: .38; cursor: not-allowed; box-shadow: none; }
     .hold-help { margin: 8px 1px 0; color: rgba(248,244,233,.58); font-size: 10px; line-height: 1.55; }
     .stop-button { width: 100%; min-height: 48px; margin-top: 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 15px; color: #ffd9cf; background: rgba(183,68,53,.18); font-weight: 800; cursor: pointer; }
@@ -294,6 +295,8 @@
     "use strict";
     const TOKEN_KEY = "watering-api-token-v1";
     const CALIBRATION_KEY = "watering-moisture-calibration-v1";
+    // These are fail-closed client expectations, intentionally duplicated from
+    // firmware. A stale or mismatched dashboard must reject the start response.
     const HOLD_HEARTBEAT_MS = 500;
     const HOLD_LEASE_MS = 1500;
     const HOLD_MAX_RUN_MS = 600000;
@@ -570,7 +573,7 @@
       }
     }
 
-    async function releaseHold(reason = "release", keepalive = true, force = false) {
+    async function releaseHold(reason = "release", keepalive = true, force = false, silent = true) {
       const wasEngaged = hold.pressed || hold.startInFlight || hold.active || Boolean(hold.requestId);
       hold.pressed = false;
       hold.active = false;
@@ -583,7 +586,7 @@
         await hold.stopPromise;
         if (!force) return;
       }
-      const stopPromise = stopWatering({ silent: true, keepalive, refresh: !keepalive });
+      const stopPromise = stopWatering({ silent, keepalive, refresh: !keepalive });
       hold.stopPromise = stopPromise;
       await stopPromise;
       if (hold.stopPromise === stopPromise) hold.stopPromise = null;
@@ -708,7 +711,7 @@
     });
     $("stop-button").addEventListener("click", () => {
       const holdEngaged = hold.pressed || hold.startInFlight || hold.active || Boolean(hold.requestId);
-      if (holdEngaged) void releaseHold("emergency-button", false, true);
+      if (holdEngaged) void releaseHold("emergency-button", false, true, false);
       else void stopWatering();
     });
     window.addEventListener("blur", () => { void releaseHold("blur", true); });
