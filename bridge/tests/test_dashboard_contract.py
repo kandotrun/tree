@@ -57,7 +57,7 @@ def test_dashboard_uses_bounded_non_retrying_api_requests() -> None:
 
     assert "async function apiRequest(path" in source
     assert "return parseResponse(await fetch(path, options));" in source
-    assert source.count("fetch(path, options)") == 1
+    assert source.count("await fetch(") == 1
     assert 'apiRequest("/v1/status"' in source
     assert 'apiRequest("/v1/water"' in source
     assert 'apiRequest("/v1/stop"' in source
@@ -88,6 +88,17 @@ def test_dashboard_only_labels_dryness_after_two_point_calibration() -> None:
     assert "calibration.wetAdc" in source
     assert "未校正" in source
     assert "自動給水には使用しません" in source
+
+    dry_start = source.find('$("calibrate-dry").addEventListener')
+    wet_start = source.find('$("calibrate-wet").addEventListener')
+    reset_start = source.find('$("reset-calibration").addEventListener')
+    assert 0 <= dry_start < wet_start < reset_start
+    dry_handler = source[dry_start:wet_start]
+    wet_handler = source[wet_start:reset_start]
+    assert "state.adc === calibration.wetAdc" in dry_handler
+    assert "state.adc === calibration.dryAdc" in wet_handler
+    assert "renderMoisture();" in dry_handler
+    assert "renderMoisture();" in wet_handler
 
 
 def test_dashboard_has_no_external_runtime_dependency() -> None:
@@ -129,11 +140,26 @@ def test_emergency_stop_stays_available_when_status_refresh_fails() -> None:
     assert '$("armed-state").textContent = "状態不明"' in source
 
 
+def test_status_refresh_rejects_non_object_json_before_state_update() -> None:
+    source = dashboard_source()
+    accept_start = source.find("function acceptStatus(payload)")
+    unlock_start = source.find("function unlockDashboard()")
+    assert 0 <= accept_start < unlock_start
+    accept_status = source[accept_start:unlock_start]
+
+    assert 'if (!payload || typeof payload !== "object")' in accept_status
+    assert 'throw new Error("invalid_status_payload")' in accept_status
+    assert accept_status.index("invalid_status_payload") < accept_status.index(
+        "state.status = payload"
+    )
+
+
 def test_empty_status_history_clears_stale_event_content() -> None:
     source = dashboard_source()
-    render_last_event = source.split("function renderLastEvent", 1)[1].split(
-        "function reconcileHoldWithStatus", 1
-    )[0]
+    event_start = source.find("function renderLastEvent")
+    reconcile_start = source.find("function reconcileHoldWithStatus")
+    assert 0 <= event_start < reconcile_start
+    render_last_event = source[event_start:reconcile_start]
 
     assert "if (!status.last_request_id)" in render_last_event
     assert '$("last-event-title").textContent = "給水履歴はありません"' in render_last_event
@@ -182,7 +208,8 @@ def test_hold_release_paths_stop_and_never_overlap_heartbeats() -> None:
     assert "if (!hold.pressed) {" in source
     assert "await releaseHold({ force: true });" in source
     assert "payload: {}," in source
-    assert "keepalive" in source
+    assert 'apiRequest("/v1/stop", {' in source
+    assert "stopWatering({ silent = false, keepalive = false" in source
     assert 'window.addEventListener("pagehide", () => { void releaseHold(); })' in source
     assert "stopWatering({ silent, keepalive" in source
     assert "releaseHold({ keepalive: false, force: true, silent: false })" in source

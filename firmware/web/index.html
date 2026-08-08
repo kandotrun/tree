@@ -655,6 +655,9 @@
     }
 
     function acceptStatus(payload) {
+      if (!payload || typeof payload !== "object") {
+        throw new Error("invalid_status_payload");
+      }
       state.status = payload;
       if (Number.isInteger(payload.moisture_adc)) {
         state.adc = payload.moisture_adc;
@@ -1176,14 +1179,22 @@
 
     $("calibrate-dry").addEventListener("click", () => {
       if (state.adc === null) return showToast("センサー値を取得できていません。", true);
+      if (state.adc === calibration.wetAdc) {
+        return showToast("湿潤点と同じ値です。別の状態で設定してください。", true);
+      }
       calibration.dryAdc = state.adc;
       saveCalibration();
+      renderMoisture();
       showToast("現在値を乾燥点として保存しました。");
     });
     $("calibrate-wet").addEventListener("click", () => {
       if (state.adc === null) return showToast("センサー値を取得できていません。", true);
+      if (state.adc === calibration.dryAdc) {
+        return showToast("乾燥点と同じ値です。別の状態で設定してください。", true);
+      }
       calibration.wetAdc = state.adc;
       saveCalibration();
+      renderMoisture();
       showToast("現在値を湿潤点として保存しました。");
     });
     $("reset-calibration").addEventListener("click", () => {
