@@ -329,12 +329,18 @@ def test_nas_deployment_runbooks_fail_closed_and_restart_services() -> None:
     assert "systemctl --user enable --now tree-public-gateway.service" not in public
     assert public.count("set -euo pipefail") >= 3
     assert "複数processやworkerを同時起動しません" in public
-    assert public.index('test -f "$base/shared/public.env"') < public.index('ln -sfn "$release"')
+    public_env_check = 'test -f "$base/shared/public.env"'
+    public_symlink_swap = 'ln -sfn "$release"'
+    assert public_env_check in public
+    assert public_symlink_swap in public
+    assert public.index(public_env_check) < public.index(public_symlink_swap)
 
     assert "set -euo pipefail" in telemetry
-    assert telemetry.index('test -f "$base/shared/telemetry.env"') < telemetry.index(
-        'python3 -m zipfile -e "$wheel"'
-    )
+    telemetry_env_check = 'test -f "$base/shared/telemetry.env"'
+    telemetry_wheel_extract = 'python3 -m zipfile -e "$wheel"'
+    assert telemetry_env_check in telemetry
+    assert telemetry_wheel_extract in telemetry
+    assert telemetry.index(telemetry_env_check) < telemetry.index(telemetry_wheel_extract)
     assert "systemctl --user enable tree-moisture-logger.service" in telemetry
     assert "systemctl --user restart tree-moisture-logger.service" in telemetry
     assert "systemctl --user enable --now tree-moisture-logger.service" not in telemetry
