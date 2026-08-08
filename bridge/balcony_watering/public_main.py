@@ -7,7 +7,7 @@ import time
 from .atom_client import AtomClient
 from .config import ConfigError, load_public_settings
 from .public_gateway import PublicGateway
-from .public_server import create_server
+from .public_server import PublicAssetLoadError, create_server
 from .public_state import PublicActionStore, PublicLimits
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,6 +53,9 @@ def main() -> int:
             gateway=gateway,
             public_origin=public_origin,
         )
+    except PublicAssetLoadError as exc:
+        _LOGGER.error("cannot load public assets: %s", exc)
+        return 3
     except OSError as exc:
         _LOGGER.error("cannot bind loopback port %d: %s", port, exc)
         return 3

@@ -6,6 +6,11 @@ const state = {
   stopRecommended: false,
 };
 let refreshGeneration = 0;
+let pollTimer = null;
+let pollInFlight = false;
+let pollRerunRequested = false;
+const pollIntervalMs = 3000;
+const statusRequestTimeoutMs = 10000;
 
 const elements = {
   body: document.body,
@@ -30,10 +35,17 @@ async function readJson(response) {
 }
 
 async function fetchStatus() {
-  return readJson(await fetch("/api/status", {
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  }));
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), statusRequestTimeoutMs);
+  try {
+    return await readJson(await fetch("/api/status", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: controller.signal,
+    }));
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
 function formatWait(seconds) {
@@ -105,6 +117,40 @@ async function refresh() {
   }
 }
 
+function clearScheduledPoll() {
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function scheduleNextPoll() {
+  clearScheduledPoll();
+  if (document.hidden) return;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    void runPoll();
+  }, pollIntervalMs);
+}
+
+async function runPoll() {
+  if (pollInFlight) {
+    pollRerunRequested = true;
+    refreshGeneration += 1;
+    return;
+  }
+  pollInFlight = true;
+  try {
+    do {
+      pollRerunRequested = false;
+      await refresh();
+    } while (pollRerunRequested && !document.hidden);
+  } finally {
+    pollInFlight = false;
+    scheduleNextPoll();
+  }
+}
+
 async function sendAction(path) {
   const response = await fetch(path, {
     method: "POST",
@@ -163,10 +209,8 @@ elements.stop.addEventListener("click", async () => {
   }
 });
 
-void refresh();
-setInterval(() => {
-  if (!document.hidden) void refresh();
-}, 3000);
+void runPoll();
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) void refresh();
+  clearScheduledPoll();
+  if (!document.hidden) void runPoll();
 });

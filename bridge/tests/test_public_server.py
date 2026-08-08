@@ -273,6 +273,45 @@ def test_partial_request_body_times_out_and_server_recovers() -> None:
     assert gateway.water_calls == 0
 
 
+def test_slow_trickle_request_cannot_monopolize_only_handler_slot() -> None:
+    gateway = FakeGateway()
+    stop_trickle = threading.Event()
+    trickle_thread: threading.Thread | None = None
+    client: socket.socket | None = None
+
+    with running_server(
+        gateway,
+        request_timeout_sec=0.1,
+        max_active_requests=1,
+    ) as address:
+        client = socket.create_connection(address, timeout=2)
+
+        def trickle() -> None:
+            assert client is not None
+            try:
+                while not stop_trickle.is_set():
+                    client.sendall(b"G")
+                    time.sleep(0.03)
+            except OSError:
+                pass
+
+        trickle_thread = threading.Thread(target=trickle)
+        trickle_thread.start()
+        try:
+            time.sleep(0.3)
+            recovered, recovered_payload = request(address, "GET", "/healthz")
+        finally:
+            stop_trickle.set()
+            client.close()
+            trickle_thread.join(timeout=2)
+
+    assert recovered.status == 200
+    assert json.loads(recovered_payload) == {
+        "ok": True,
+        "service": "tree-public-gateway",
+    }
+
+
 def test_client_reset_during_request_body_is_silent(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -355,3 +394,51 @@ def test_handler_hides_unexpected_internal_error_details() -> None:
     assert response.status == 503
     assert payload == {"error": "gateway_unavailable"}
     assert "private" not in str(payload)
+
+
+@pytest.mark.parametrize("request_timeout_sec", [float("nan"), float("inf")])
+def test_server_rejects_non_finite_request_timeouts(request_timeout_sec: float) -> None:
+    server = None
+    try:
+        with pytest.raises(ValueError, match="finite and positive"):
+            server = create_server(
+                ("127.0.0.1", 0),
+                gateway=FakeGateway(),  # type: ignore[arg-type]
+                public_origin="https://tree.example.com",
+                request_timeout_sec=request_timeout_sec,
+            )
+    finally:
+        if server is not None:
+            server.server_close()
+
+
+@pytest.mark.parametrize("max_active_requests", [True, 1.5])
+def test_server_rejects_non_integral_concurrency_limits(
+    max_active_requests: object,
+) -> None:
+    server = None
+    try:
+        with pytest.raises(ValueError, match="positive integer"):
+            server = create_server(
+                ("127.0.0.1", 0),
+                gateway=FakeGateway(),  # type: ignore[arg-type]
+                public_origin="https://tree.example.com",
+                max_active_requests=max_active_requests,  # type: ignore[arg-type]
+            )
+    finally:
+        if server is not None:
+            server.server_close()
+
+
+def test_create_server_rejects_non_loopback_bind() -> None:
+    server = None
+    try:
+        with pytest.raises(ValueError, match="loopback"):
+            server = create_server(
+                ("0.0.0.0", 0),
+                gateway=FakeGateway(),  # type: ignore[arg-type]
+                public_origin="https://tree.example.com",
+            )
+    finally:
+        if server is not None:
+            server.server_close()
