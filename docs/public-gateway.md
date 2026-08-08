@@ -35,7 +35,10 @@ ATOMのHTTP APIや組み込み管理画面を直接Tunnelへ接続しません�
 
 ## NAS user service
 
-通常運用先は常時稼働NASです。root権限を必要としないuser serviceとして動かします。
+通常運用先は常時稼働NASです。
+root権限を必要としないuser serviceとして動かします。
+gatewayは1 user serviceにつき1 processで運用し、複数processやworkerを同時起動しません。
+SQLiteのquota予約はprocess間でもatomicですが、water/stopの直列化lockはprocess-localです。
 
 想定layout:
 
@@ -54,22 +57,28 @@ ATOMのHTTP APIや組み込み管理画面を直接Tunnelへ接続しません�
 bridgeはstdlib-onlyです。`ensurepip`や`python3-venv`がないNASでも動かせるよう、build済みwheelをprivate release directoryへ展開し、`current` symlinkをatomicに切り替えます。
 
 ```bash
+set -euo pipefail
+shopt -s nullglob
 uv build --project bridge
 base="$HOME/apps/balcony-watering"
 release="$base/releases/$(date -u +%Y%m%dT%H%M%SZ)"
-set -- bridge/dist/*.whl
-test "$#" -eq 1
+wheels=(bridge/dist/*.whl)
+if (( ${#wheels[@]} != 1 )); then
+  printf 'expected exactly one bridge wheel, found %d\n' "${#wheels[@]}" >&2
+  exit 1
+fi
+wheel=${wheels[0]}
 install -d -m 700 "$release/app" "$base/shared"
-python3 -m zipfile -e "$1" "$release/app"
+python3 -m zipfile -e "$wheel" "$release/app"
 (
   cd "$release/app"
   /usr/bin/python3 -c 'from balcony_watering.public_main import main'
 )
-ln -sfn "$release" "$base/current.next"
-mv -Tf "$base/current.next" "$base/current"
 # 初回だけplaceholderを配置し、既存の本番設定は保持する。
 test -f "$base/shared/public.env" ||
   install -m 600 bridge/public.example.env "$base/shared/public.env"
+ln -sfn "$release" "$base/current.next"
+mv -Tf "$base/current.next" "$base/current"
 ```
 
 wheelは信頼するローカルbuildまたはCI artifactだけを使用し、依存packageやbinary extensionを追加した場合はこの展開方式を再評価します。
@@ -79,12 +88,14 @@ wheelは信頼するローカルbuildまたはCI artifactだけを使用し、�
 user unitを配置します。
 
 ```bash
+set -euo pipefail
 install -d ~/.config/systemd/user
 install -m 644 bridge/systemd/tree-public-gateway.service \
   bridge/systemd/tree-public-tunnel.service \
   ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now tree-public-gateway.service
+systemctl --user enable tree-public-gateway.service
+systemctl --user restart tree-public-gateway.service
 ```
 
 `loginctl show-user "$USER" -p Linger`が`yes`であることを確認します。`no`の場合だけNAS管理者がlingerを有効化します。
@@ -103,7 +114,9 @@ install -m 600 /secure/path/tunnel.token \
 別zone用の`~/.cloudflared/cert.pem`を`cloudflared tunnel route dns`へ流用しません。DNS作成後はAPIのrecord name/contentとpublic resolverの両方で完全なhostnameを照合します。
 
 ```bash
-systemctl --user enable --now tree-public-tunnel.service
+set -euo pipefail
+systemctl --user enable tree-public-tunnel.service
+systemctl --user restart tree-public-tunnel.service
 systemctl --user status tree-public-gateway.service tree-public-tunnel.service
 ```
 

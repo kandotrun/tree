@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import socket
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Timer
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -41,6 +43,10 @@ _ASSET_NAMES = {
 }
 
 
+class PublicAssetLoadError(RuntimeError):
+    """Raised when packaged public assets cannot be loaded."""
+
+
 def _server_busy_response() -> bytes:
     payload = b'{"error":"server_busy"}'
     headers = {
@@ -69,10 +75,15 @@ class PublicHTTPServer(ThreadingHTTPServer):
         request_timeout_sec: float,
         max_active_requests: int,
     ) -> None:
-        if request_timeout_sec <= 0:
-            raise ValueError("request_timeout_sec must be positive")
-        if max_active_requests < 1:
-            raise ValueError("max_active_requests must be positive")
+        if (
+            isinstance(request_timeout_sec, bool)
+            or not isinstance(request_timeout_sec, (int, float))
+            or not math.isfinite(request_timeout_sec)
+            or request_timeout_sec <= 0
+        ):
+            raise ValueError("request_timeout_sec must be finite and positive")
+        if type(max_active_requests) is not int or max_active_requests < 1:
+            raise ValueError("max_active_requests must be a positive integer")
         self.gateway = gateway
         self.public_origin = public_origin
         self.assets = assets
@@ -113,10 +124,30 @@ class PublicRequestHandler(BaseHTTPRequestHandler):
     sys_version = ""
 
     def handle(self) -> None:
+        timer = Timer(
+            self.public_server.request_timeout_sec,
+            self._expire_request_read,
+        )
+        timer.daemon = True
+        self._request_read_timer: Timer | None = timer
+        timer.start()
         try:
             super().handle()
         except ConnectionError:
             self.close_connection = True
+        finally:
+            self._cancel_request_read_deadline()
+
+    def _expire_request_read(self) -> None:
+        self.close_connection = True
+        with suppress(OSError):
+            self.connection.shutdown(socket.SHUT_RD)
+
+    def _cancel_request_read_deadline(self) -> None:
+        timer = self._request_read_timer
+        self._request_read_timer = None
+        if timer is not None:
+            timer.cancel()
 
     @property
     def public_server(self) -> PublicHTTPServer:
@@ -173,6 +204,7 @@ class PublicRequestHandler(BaseHTTPRequestHandler):
         return urlsplit(self.path).path
 
     def do_GET(self) -> None:
+        self._cancel_request_read_deadline()
         path = self._path()
         if path in self.public_server.assets:
             self._send(
@@ -211,6 +243,8 @@ class PublicRequestHandler(BaseHTTPRequestHandler):
             raw = self.rfile.read(content_length)
         except TimeoutError:
             return False, "request_timeout", 408
+        if len(raw) != content_length:
+            return False, "request_timeout", 408
         try:
             body = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -222,12 +256,17 @@ class PublicRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = self._path()
         if path not in {"/api/water", "/api/stop"}:
+            self._cancel_request_read_deadline()
             self._send_json(404, {"error": "not_found"})
             return
         if not self._origin_allowed():
+            self._cancel_request_read_deadline()
             self._send_json(403, {"error": "origin_not_allowed"})
             return
-        valid, error, status_code = self._read_empty_json_object()
+        try:
+            valid, error, status_code = self._read_empty_json_object()
+        finally:
+            self._cancel_request_read_deadline()
         if not valid:
             self._send_json(status_code, {"error": error})
             return
@@ -248,6 +287,7 @@ class PublicRequestHandler(BaseHTTPRequestHandler):
         self._send_gateway_reply(reply)
 
     def do_OPTIONS(self) -> None:
+        self._cancel_request_read_deadline()
         self._send_json(405, {"error": "method_not_allowed"})
 
     def log_message(self, format: str, *args: object) -> None:
@@ -268,6 +308,12 @@ def create_server(
     max_active_requests: int = _DEFAULT_MAX_ACTIVE_REQUESTS,
 ) -> PublicHTTPServer:
     host, _ = address
+    if host not in {"127.0.0.1", "::1"}:
+        raise ValueError("public server must bind to a loopback address")
+    try:
+        assets = _load_assets()
+    except OSError as exc:
+        raise PublicAssetLoadError("packaged public assets are unavailable") from exc
     server_class = PublicHTTPServer
     if ":" in host:
         server_class = type(
@@ -280,7 +326,7 @@ def create_server(
         PublicRequestHandler,
         gateway=gateway,
         public_origin=public_origin,
-        assets=_load_assets(),
+        assets=assets,
         request_timeout_sec=request_timeout_sec,
         max_active_requests=max_active_requests,
     )

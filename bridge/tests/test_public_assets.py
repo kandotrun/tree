@@ -6,6 +6,7 @@ from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parents[1] / "balcony_watering" / "public"
 SYSTEMD = Path(__file__).resolve().parents[1] / "systemd"
+ROOT = ASSETS.parents[2]
 
 
 def test_example_database_paths_match_shared_runtime_layout() -> None:
@@ -53,7 +54,11 @@ def test_public_javascript_never_forwards_client_selected_duration() -> None:
     assert "JSON.stringify({})" in javascript
     assert "document.hidden" in javascript
     assert "duration_sec" not in javascript
-    assert "setInterval" in javascript
+    assert "setInterval" not in javascript
+    assert "setTimeout" in javascript
+    assert "AbortController" in javascript
+    assert "statusRequestTimeoutMs" in javascript
+    assert "pollRerunRequested" in javascript
 
 
 def test_public_javascript_ignores_stale_status_responses() -> None:
@@ -85,6 +90,12 @@ const context = vm.createContext({
   document,
   window: { addEventListener() {} },
   setInterval() {},
+  setTimeout() { return 1; },
+  clearTimeout() {},
+  AbortController: class {
+    constructor() { this.signal = {}; }
+    abort() {}
+  },
   fetch() {
     return new Promise((resolve) => pending.push(resolve));
   },
@@ -144,6 +155,196 @@ const status = (state) => ({
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "PASS"
+
+
+def test_public_javascript_schedules_next_poll_only_after_completion() -> None:
+    script = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const pending = [];
+const scheduled = [];
+const intervals = [];
+let nextTimerId = 1;
+let visibilityHandler = null;
+class FakeAbortController {
+  constructor() {
+    this.signal = {
+      aborted: false,
+      listeners: [],
+      addEventListener(type, callback) {
+        if (type === "abort") this.listeners.push(callback);
+      },
+    };
+  }
+  abort() {
+    if (this.signal.aborted) return;
+    this.signal.aborted = true;
+    for (const callback of this.signal.listeners.splice(0)) callback();
+  }
+}
+const element = () => ({
+  textContent: "",
+  hidden: false,
+  disabled: false,
+  addEventListener() {},
+});
+const document = {
+  body: { dataset: {} },
+  hidden: false,
+  querySelector: element,
+  addEventListener(type, callback) {
+    if (type === "visibilitychange") visibilityHandler = callback;
+  },
+};
+const context = vm.createContext({
+  document,
+  AbortController: FakeAbortController,
+  setInterval(callback, delay) { intervals.push({ callback, delay }); },
+  setTimeout(callback, delay) {
+    const id = nextTimerId++;
+    scheduled.push({ id, callback, delay });
+    return id;
+  },
+  clearTimeout(id) {
+    const index = scheduled.findIndex((timer) => timer.id === id);
+    if (index !== -1) scheduled.splice(index, 1);
+  },
+  fetch(_url, options = {}) {
+    return new Promise((resolve, reject) => {
+      pending.push({ resolve, reject });
+      if (options.signal) {
+        options.signal.addEventListener("abort", () => reject(new Error("aborted")));
+      }
+    });
+  },
+});
+const response = {
+  ok: true,
+  status: 200,
+  async json() {
+    return {
+      state: "IDLE",
+      pump: false,
+      armed: true,
+      remaining_sec: 0,
+      hourly_used: 0,
+      hourly_limit: 6,
+      daily_used: 0,
+      daily_limit: 24,
+      retry_after_sec: 0,
+    };
+  },
+};
+
+(async () => {
+  const flush = async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  const fire = (timer) => {
+    const index = scheduled.findIndex((candidate) => candidate.id === timer.id);
+    if (index !== -1) scheduled.splice(index, 1);
+    timer.callback();
+  };
+
+  vm.runInContext(source, context);
+  if (pending.length !== 1) throw new Error("initial poll did not start");
+  if (intervals.length !== 0) throw new Error("fixed interval can overlap slow polls");
+  const deadline = scheduled.find((timer) => timer.delay === 10000);
+  if (!deadline) throw new Error("status request has no deadline");
+  if (scheduled.some((timer) => timer.delay === 3000)) {
+    throw new Error("next poll scheduled before completion");
+  }
+
+  document.hidden = true;
+  visibilityHandler();
+  document.hidden = false;
+  visibilityHandler();
+  pending[0].resolve(response);
+  await flush();
+  if (pending.length !== 2) throw new Error("tab resume did not queue an immediate poll");
+  if (document.body.dataset.state !== undefined) {
+    throw new Error("pre-resume response rendered after the tab became visible");
+  }
+  if (scheduled.some((timer) => timer.delay === 3000)) {
+    throw new Error("tab resume waited for the regular polling interval");
+  }
+  const resumedDeadline = scheduled.find((timer) => timer.delay === 10000);
+  if (!resumedDeadline) throw new Error("resumed poll has no request deadline");
+
+  fire(resumedDeadline);
+  await flush();
+  const recoveryPoll = scheduled.find((timer) => timer.delay === 3000);
+  if (!recoveryPoll) throw new Error("timed-out poll did not schedule recovery");
+
+  fire(recoveryPoll);
+  await flush();
+  if (pending.length !== 3) throw new Error("recovery poll did not start");
+  if (!scheduled.some((timer) => timer.delay === 10000)) {
+    throw new Error("recovery poll has no request deadline");
+  }
+  if (scheduled.some((timer) => timer.delay === 3000)) {
+    throw new Error("recovery poll overlapped before completion");
+  }
+
+  pending[2].resolve(response);
+  await flush();
+  if (scheduled.some((timer) => timer.delay === 10000)) {
+    throw new Error("completed request deadline was not cleared");
+  }
+  if (scheduled.filter((timer) => timer.delay === 3000).length !== 1) {
+    throw new Error("next poll was not scheduled after completion");
+  }
+  if (document.body.dataset.state !== "ready") {
+    throw new Error("recovery poll did not restore ready state");
+  }
+  console.log("PASS");
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+"""
+    completed = subprocess.run(
+        ["node", "-e", script, str(ASSETS / "app.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "PASS"
+
+
+def test_nas_deployment_runbooks_fail_closed_and_restart_services() -> None:
+    public = (ROOT / "docs" / "public-gateway.md").read_text(encoding="utf-8")
+    telemetry = (ROOT / "docs" / "moisture-telemetry.md").read_text(encoding="utf-8")
+
+    assert "set -euo pipefail" in public
+    assert "shopt -s nullglob" in public
+    assert "set -- bridge/dist/*.whl" not in public
+    assert "systemctl --user enable tree-public-gateway.service" in public
+    assert "systemctl --user restart tree-public-gateway.service" in public
+    assert "systemctl --user enable --now tree-public-gateway.service" not in public
+    assert public.count("set -euo pipefail") >= 3
+    assert "複数processやworkerを同時起動しません" in public
+    public_env_check = 'test -f "$base/shared/public.env"'
+    public_symlink_swap = 'ln -sfn "$release"'
+    assert public_env_check in public
+    assert public_symlink_swap in public
+    assert public.index(public_env_check) < public.index(public_symlink_swap)
+
+    assert "set -euo pipefail" in telemetry
+    telemetry_env_check = 'test -f "$base/shared/telemetry.env"'
+    telemetry_wheel_extract = 'python3 -m zipfile -e "$wheel"'
+    assert telemetry_env_check in telemetry
+    assert telemetry_wheel_extract in telemetry
+    assert telemetry.index(telemetry_env_check) < telemetry.index(telemetry_wheel_extract)
+    assert "systemctl --user enable tree-moisture-logger.service" in telemetry
+    assert "systemctl --user restart tree-moisture-logger.service" in telemetry
+    assert "systemctl --user enable --now tree-moisture-logger.service" not in telemetry
+    assert telemetry.count("set -euo pipefail") >= 2
 
 
 def test_public_javascript_keeps_stop_available_for_ambiguous_start() -> None:

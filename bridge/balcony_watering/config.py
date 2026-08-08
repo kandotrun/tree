@@ -111,6 +111,13 @@ def _positive_float_default(
     return value
 
 
+def _expanded_path(raw: str | Path, key: str) -> Path:
+    try:
+        return Path(raw).expanduser()
+    except RuntimeError as exc:
+        raise ConfigError(f"{key} cannot resolve the requested home directory") from exc
+
+
 def _validate_public_origin(raw: str) -> str:
     parsed = urlsplit(raw)
     if parsed.scheme != "https" or not parsed.hostname:
@@ -221,7 +228,7 @@ class PublicSettings:
 
         return cls(
             atom_url=_validate_atom_url(_required(mapping, "ATOM_URL")),
-            database_path=Path(raw_database_path).expanduser(),
+            database_path=_expanded_path(raw_database_path, "PUBLIC_DATABASE_PATH"),
             listen_host=listen_host,
             listen_port=_bounded_int(
                 mapping,
@@ -262,9 +269,13 @@ class PublicSettings:
 
 def _read_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    if not path.exists():
-        return values
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    try:
+        if not path.exists():
+            return values
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise ConfigError(f"cannot read environment file {path}") from exc
+    for line_number, raw_line in enumerate(lines, 1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -303,8 +314,11 @@ def load_public_settings(
     source = os.environ if environ is None else environ
     selected_path = env_file
     if selected_path is None:
-        default_path = Path.home() / "apps" / "balcony-watering" / "shared" / "public.env"
-        selected_path = Path(source.get("PUBLIC_ENV_FILE", default_path)).expanduser()
+        raw_path = source.get(
+            "PUBLIC_ENV_FILE",
+            "~/apps/balcony-watering/shared/public.env",
+        )
+        selected_path = _expanded_path(raw_path, "PUBLIC_ENV_FILE")
     values = _read_env_file(selected_path)
     values.update(source)
     return PublicSettings.from_mapping(values)

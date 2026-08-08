@@ -122,3 +122,33 @@ def test_load_public_settings_uses_environment_over_file(tmp_path: Path) -> None
     assert settings.atom_url == "http://192.168.1.20"
     assert settings.duration_sec == 10
     assert settings.database_path == Path("/tmp/from-file.db")
+
+
+def test_load_public_settings_wraps_env_file_io_errors(tmp_path: Path) -> None:
+    env_file = tmp_path / "public.env"
+    env_file.mkdir()
+
+    with pytest.raises(ConfigError, match="cannot read environment file"):
+        load_public_settings(env_file=env_file, environ={})
+
+
+def test_load_public_settings_wraps_invalid_env_file_encoding(tmp_path: Path) -> None:
+    env_file = tmp_path / "public.env"
+    env_file.write_bytes(b"ATOM_URL=\xff\n")
+
+    with pytest.raises(ConfigError, match="cannot read environment file"):
+        load_public_settings(env_file=env_file, environ={})
+
+
+def test_load_public_settings_wraps_unresolvable_env_file_home() -> None:
+    with pytest.raises(ConfigError, match="PUBLIC_ENV_FILE"):
+        load_public_settings(
+            environ={"PUBLIC_ENV_FILE": "~tree-user-that-does-not-exist/public.env"}
+        )
+
+
+def test_public_settings_wraps_unresolvable_database_home() -> None:
+    with pytest.raises(ConfigError, match="PUBLIC_DATABASE_PATH"):
+        PublicSettings.from_mapping(
+            BASE_ENV | {"PUBLIC_DATABASE_PATH": "~tree-user-that-does-not-exist/public.db"}
+        )

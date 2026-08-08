@@ -32,24 +32,27 @@ DBは既定90日保持です。起動時と、その後24時間ごとに期限�
 NAS上で実行します。
 
 ```bash
+set -euo pipefail
 base="$HOME/apps/balcony-watering"
 wheel=/secure/path/balcony_watering_bridge-VERSION-py3-none-any.whl
 install -d -m 700 "$base/telemetry/app" "$base/shared"
 test -f "$wheel"
-python3 -m zipfile -e "$wheel" "$base/telemetry/app"
 # 初回だけplaceholderを配置し、既存の本番設定は保持する。
 test -f "$base/shared/telemetry.env" ||
   install -m 600 bridge/telemetry.example.env "$base/shared/telemetry.env"
+python3 -m zipfile -e "$wheel" "$base/telemetry/app"
 ```
 
 `telemetry.env`の`ATOM_URL`をprivate/local HTTP originへ変更します。interval、retention、timeoutは安全な範囲だけ受け付けます。
 
 ```bash
+set -euo pipefail
 install -d ~/.config/systemd/user
 install -m 644 bridge/systemd/tree-moisture-logger.service \
   ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now tree-moisture-logger.service
+systemctl --user enable tree-moisture-logger.service
+systemctl --user restart tree-moisture-logger.service
 ```
 
 長期運用にはuser lingeringが必要です。
