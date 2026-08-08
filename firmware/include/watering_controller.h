@@ -21,6 +21,7 @@ enum class State {
 enum class StartResult {
   Accepted,
   InvalidRequest,
+  InvalidDuration,
   Duplicate,
   BootGuard,
   Busy,
@@ -47,6 +48,8 @@ class WateringController {
 
   void tick(uint32_t now);
   StartResult start(const char* request_id, uint32_t now);
+  StartResult start(const char* request_id, uint32_t now,
+                    uint32_t requested_duration_ms);
   void stop(uint32_t now);
   void set_error(const char* reason, uint32_t now);
 
@@ -64,6 +67,9 @@ class WateringController {
  private:
   static uint32_t elapsed(uint32_t now, uint32_t since) { return now - since; }
   bool valid_config() const;
+  StartResult start_with_duration(const char* request_id, uint32_t now,
+                                  uint32_t requested_duration_ms,
+                                  bool allow_safety_clamp);
   bool is_duplicate(const char* request_id) const;
   void remember_request(const char* request_id);
   void finish_watering(uint32_t now, const char* reason);
@@ -72,6 +78,7 @@ class WateringController {
   State state_;
   uint32_t state_started_at_;
   uint32_t watering_started_at_;
+  uint32_t active_duration_ms_;
   uint32_t last_runtime_ms_;
   std::string last_request_id_;
   std::string last_stop_reason_;

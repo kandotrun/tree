@@ -8,7 +8,10 @@ that the pump turns off locally even if Wi-Fi, the bridge, or Hermes fails.
 ## Safety invariants
 
 - Set GPIO 26 to `OUTPUT` and `LOW` before Wi-Fi or any other peripheral setup.
-- Never accept a client-supplied runtime or volume; expose one configured dose.
+- Never accept a client-supplied volume. An interactive request may include only
+  an integer `duration_sec` bounded to 1-180 seconds and `MAX_RUN_MS`; keep the
+  independent local cutoff authoritative. Bridge/Hermes commands stay fixed and
+  do not expose a runtime argument.
 - Never retry `POST /v1/water` automatically after an ambiguous network result.
 - Persist the accepted request ID before physically enabling the pump.
 - Keep the API LAN-only. Never add port forwarding, public ingress, or secrets.
@@ -16,6 +19,8 @@ that the pump turns off locally even if Wi-Fi, the bridge, or Hermes fails.
   siphon/drainage/leak checks, and a two-week supervised pilot pass.
 - Do not use moisture ADC values as an automatic start condition until real
   calibration data exists.
+- Keep dashboard calibration browser-local and non-actuating. Never persist the
+  bearer token beyond `sessionStorage` or embed it in dashboard assets.
 
 ## Public repository rules
 

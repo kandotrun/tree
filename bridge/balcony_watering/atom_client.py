@@ -25,6 +25,7 @@ class AtomProtocolError(AtomError):
 
 _ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_MAX_DURATION_SEC = 180
 _VALID_STATES = frozenset({"BOOT_GUARD", "IDLE", "WATERING", "COOLDOWN", "ERROR"})
 _STATUS_INTEGER_FIELDS = {
     "uptime_ms": (0, 0xFFFFFFFF),
@@ -215,15 +216,25 @@ class AtomClient:
             sanitized[field] = value
         return sanitized
 
-    def water(self, request_id: str) -> dict[str, Any]:
+    def water(
+        self,
+        request_id: str,
+        *,
+        duration_sec: int | None = None,
+    ) -> dict[str, Any]:
         if not request_id:
             raise ValueError("request_id must not be empty")
+        payload: dict[str, Any] = {"request_id": request_id}
+        if duration_sec is not None:
+            if type(duration_sec) is not int or not 1 <= duration_sec <= _MAX_DURATION_SEC:
+                raise ValueError("duration_sec must be an integer from 1 through 180")
+            payload["duration_sec"] = duration_sec
         return self._request(
             "POST",
             "/v1/water",
             expected_status=202,
             authenticated=True,
-            payload={"request_id": request_id},
+            payload=payload,
         )
 
     def stop(self) -> dict[str, Any]:

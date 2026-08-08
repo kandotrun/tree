@@ -15,6 +15,7 @@
 
 #include "api_contract.h"
 #include "config.h"
+#include "dashboard_page.generated.h"
 #include "pump_safety_gate.h"
 #include "sensor_filter.h"
 #include "watering_controller.h"
@@ -24,6 +25,7 @@ namespace {
 using watering::ControllerConfig;
 using watering::HttpDecision;
 using watering::PumpSafetyGate;
+using watering::RequestedDuration;
 using watering::StartResult;
 using watering::State;
 using watering::WateringController;
@@ -145,16 +147,19 @@ void disarm_pump_safety_timer() {
   }
 }
 
-bool arm_pump_safety_timer() {
-  if (pump_safety_timer == nullptr) {
+bool arm_pump_safety_timer(uint32_t cutoff_ms) {
+  const uint32_t maximum_cutoff_ms =
+      min(static_cast<uint32_t>(MAX_RUN_MS), watering::kAbsoluteMaxRunMs);
+  if (pump_safety_timer == nullptr || cutoff_ms == 0U ||
+      cutoff_ms > maximum_cutoff_ms) {
     return false;
   }
   disarm_pump_safety_timer();
   pump_safety_gate.arm();
   pump_safety_timer_active.store(true);
-  const uint64_t maximum_runtime_us =
-      static_cast<uint64_t>(MAX_RUN_MS) * 1000ULL;
-  if (esp_timer_start_once(pump_safety_timer, maximum_runtime_us) != ESP_OK) {
+  const uint64_t cutoff_runtime_us =
+      static_cast<uint64_t>(cutoff_ms) * 1000ULL;
+  if (esp_timer_start_once(pump_safety_timer, cutoff_runtime_us) != ESP_OK) {
     pump_safety_timer_active.store(false);
     pump_safety_gate.cutoff();
     return false;
@@ -176,6 +181,12 @@ void apply_pump_output() {
   const bool should_run =
       pump_safety_gate.allows_output(controller_requests_output);
   digitalWrite(PUMP_PIN, should_run ? HIGH : LOW);
+  // The timer can close the gate between the first check and GPIO write. A
+  // second check prevents a stale HIGH from surviving that race.
+  if (should_run &&
+      !pump_safety_gate.allows_output(controller_requests_output)) {
+    digitalWrite(PUMP_PIN, LOW);
+  }
 }
 
 void send_json(int status, JsonDocument& document) {
@@ -222,6 +233,22 @@ void handle_health() {
   send_json(200, response);
 }
 
+void handle_dashboard() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Content-Encoding", "gzip");
+  server.sendHeader("Content-Security-Policy",
+                    "default-src 'self'; style-src 'unsafe-inline'; "
+                    "script-src 'unsafe-inline'; connect-src 'self'; "
+                    "img-src 'self' data:; object-src 'none'; base-uri 'none'; "
+                    "frame-ancestors 'none'; form-action 'none'");
+  server.sendHeader("Referrer-Policy", "no-referrer");
+  server.sendHeader("X-Content-Type-Options", "nosniff");
+  server.sendHeader("X-Frame-Options", "DENY");
+  server.send_P(200, PSTR("text/html; charset=utf-8"),
+                reinterpret_cast<PGM_P>(watering::kDashboardHtmlGzip),
+                watering::kDashboardHtmlGzipLength);
+}
+
 void handle_status() {
   if (!require_authorization()) {
     return;
@@ -233,6 +260,12 @@ void handle_status() {
   response["uptime_ms"] = now;
   response["wifi_rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   response["moisture_adc"] = moisture_median;
+  response["armed"] = WATERING_ARMED;
+  response["default_duration_sec"] = static_cast<uint32_t>(DOSE_MS) / 1000U;
+  response["max_duration_sec"] =
+      min(static_cast<uint32_t>(MAX_RUN_MS), watering::kAbsoluteMaxRunMs) /
+      1000U;
+  response["scheduled_ms"] = controller->scheduled_ms();
   response["last_request_id"] = controller->last_request_id();
   response["remaining_ms"] = controller->remaining_ms(now);
   response["last_runtime_ms"] = controller->last_runtime_ms();
@@ -261,8 +294,21 @@ void handle_water() {
     return;
   }
   const char* request_id = request["request_id"].as<const char*>();
+  const JsonObjectConst request_object = request.as<JsonObjectConst>();
+  const JsonVariantConst duration_value = request_object["duration_sec"];
+  const bool duration_provided = !duration_value.isUnbound();
+  const RequestedDuration duration = watering::resolve_requested_duration(
+      duration_value, static_cast<uint32_t>(DOSE_MS),
+      static_cast<uint32_t>(MAX_RUN_MS));
+  if (!duration.valid) {
+    send_error(400, "invalid_duration_sec");
+    return;
+  }
   const uint32_t now = millis();
-  const StartResult result = controller->start(request_id, now);
+  const StartResult result = duration_provided
+                                 ? controller->start(request_id, now,
+                                                     duration.duration_ms)
+                                 : controller->start(request_id, now);
   if (result != StartResult::Accepted) {
     const HttpDecision decision = watering::http_decision(result);
     Serial.printf("water rejected reason=%s\n", decision.code);
@@ -280,7 +326,7 @@ void handle_water() {
     return;
   }
 
-  if (!arm_pump_safety_timer()) {
+  if (!arm_pump_safety_timer(controller->scheduled_ms())) {
     controller->set_error("SAFETY_TIMER_ARM_FAILED", millis());
     apply_pump_output();
     Serial.println("water rejected reason=SAFETY_TIMER_ARM_FAILED");
@@ -316,6 +362,7 @@ void handle_stop() {
 void configure_http_server() {
   const char* headers[] = {"Authorization"};
   server.collectHeaders(headers, 1U);
+  server.on("/", HTTP_GET, handle_dashboard);
   server.on("/healthz", HTTP_GET, handle_health);
   server.on("/v1/status", HTTP_GET, handle_status);
   server.on("/v1/water", HTTP_POST, handle_water);
