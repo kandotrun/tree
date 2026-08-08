@@ -15,14 +15,15 @@ M5Stack ATOM Lite, Unit Watering U101, and a small Linux bridge.
 
 ```mermaid
 flowchart LR
+    W[LAN browser] -->|dashboard + bounded manual request| A[ATOM Lite]
     H[Hermes Agent] -->|fixed command| B[Linux bridge]
     B -->|LAN-only HTTP + bearer token| A[ATOM Lite]
     A -->|GPIO 26 / ADC 32| U[Unit Watering U101]
 ```
 
 The ATOM Lite owns the physical safety boundary: pump-off boot, an independent
-one-shot cutoff plus watchdog, five-minute boot guard, cooldown, authenticated
-fixed-dose requests, request deduplication, and emergency stop. The bridge owns
+one-shot cutoff plus watchdog, five-minute boot guard, authenticated bounded-duration
+requests, request deduplication, and emergency stop. The bridge owns
 request IDs, SQLite history, tank estimation, scheduling decisions, and
 machine-readable results.
 
@@ -32,9 +33,14 @@ machine-readable results.
   sensor setup. U101's official schematic also shows a 10 kΩ gate-to-source
   pull-down (`R1`) on its active-high N-MOSFET switch, keeping the pump off while
   the host GPIO is high-impedance during reset.
-- A client cannot choose runtime or volume. Firmware accepts one configured
-  dose only and enforces an independent absolute maximum.
+- The dashboard may request an integer `duration_sec` from 1 to 180. Firmware
+  validates it against `MAX_RUN_MS` and retains an independent 180-second local
+  cutoff. No client can request volume or bypass the cutoff. Bridge/Hermes
+  commands intentionally omit duration and use the configured default dose.
 - The accepted request ID is persisted before the physical pump pin goes high.
+- The default cooldown is zero: after a dose completes or is manually stopped,
+  a new request with a distinct ID can start immediately. The active dose still
+  stops at its accepted duration and never becomes an unbounded run.
 - An ambiguous `POST /v1/water` is never retried automatically. The event stays
   `UNKNOWN` and blocks later watering until an operator investigates.
 - Firmware starts **unarmed**. `WATERING_ARMED` must remain `false` until the
@@ -75,6 +81,23 @@ pio run -e m5stack-atom
 32-byte-or-longer API token. Keep `WATERING_ARMED false` for the first flash.
 See [the development guide](docs/development-guide.md) before connecting U101.
 
+### Embedded dashboard
+
+After flashing firmware v0.2 or later, open the ATOM Lite's LAN address in a
+browser. The device serves a mobile-first dashboard with live ADC history,
+browser-local dry/wet calibration, bounded 1-180 second manual watering,
+confirmation, and emergency stop. Enter the bearer token when prompted; it is
+kept in `sessionStorage` for the current tab only. Moisture percentages are
+reference-only and never trigger watering automatically.
+
+When editing `firmware/web/index.html`, regenerate and verify the compressed
+flash asset:
+
+```bash
+python3 firmware/scripts/generate_dashboard_header.py
+python3 firmware/scripts/generate_dashboard_header.py --check
+```
+
 ### Bridge
 
 ```bash
@@ -104,9 +127,12 @@ codes, and the optional systemd timer.
   native tests.
 - Bridge behavior, SQLite transitions, HTTP handling, and no-retry semantics
   have automated tests.
-- Physical flashing, pump polarity, measured flow, waterproofing, power
-  endurance, Wi-Fi range, drainage, and siphon behavior remain unverified until
-  the purchased hardware arrives.
+- Firmware v0.1 was physically flashed and verified for boot guard, authentication,
+  unarmed refusal, one 10-second dose, and local `DOSE_COMPLETE` stop. The v0.2
+  variable-duration API and embedded dashboard are built and browser-tested but
+  still require the next USB flash and physical commissioning run.
+- Measured flow, waterproofing, power endurance, drainage, siphon behavior, and
+  the supervised pilot remain incomplete.
 - Automatic scheduling remains disabled by default.
 
 ## Documentation

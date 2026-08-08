@@ -6,10 +6,12 @@ one JSON object for Hermes or another caller.
 
 ## Safety behavior
 
-- No command accepts runtime or volume arguments.
+- No bridge command accepts runtime or volume arguments. The interactive device
+  dashboard can send a bounded duration, but Bridge/Hermes deliberately omits it
+  and receives the firmware's configured default dose.
 - `POST /v1/water` is sent once. A timeout, server error, malformed acceptance,
-  or post-preflight conflict/cooldown response becomes `UNKNOWN`; the bridge does
-  not retry.
+  or post-preflight conflict response becomes `UNKNOWN`; the bridge does not
+  retry. Optional/legacy firmware cooldown responses are handled the same way.
 - An unresolved `PENDING`, `ACCEPTED`, or `UNKNOWN` event blocks later watering.
 - Tank volume is decremented only after `DOSE_COMPLETE` is confirmed. A manual
   or safety stop remains `UNKNOWN` and does not subtract the full configured dose.
@@ -50,7 +52,10 @@ sudoedit /etc/balcony-watering.env
 
 `ATOM_URL` must be an `http://` origin on a private/local address. Set
 `DOSE_ML` only after flow calibration; it is an estimate for tank accounting,
-not a client-controlled pump duration. Firmware owns the actual duration.
+not a pump duration. The low-level `AtomClient.water()` mirrors the firmware API
+and accepts an optional bounded `duration_sec`, but the shipped bridge service,
+CLI, and Hermes commands do not expose or send it. Firmware therefore uses
+`DOSE_MS` for every bridge-triggered dose.
 Because the initial ATOM firmware does not terminate TLS, use a trusted
 WPA2/WPA3 LAN with no guest clients and never expose the API through public
 ingress. Rotate the shared token if the LAN credentials may be compromised.

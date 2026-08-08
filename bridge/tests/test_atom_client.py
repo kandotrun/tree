@@ -149,7 +149,7 @@ def test_status_omits_unknown_fields_and_rejects_invalid_state(
         make_client(base_url).status()
 
 
-def test_water_sends_only_request_id_and_accepts_202(
+def test_water_sends_only_request_id_when_duration_is_omitted(
     fake_atom: tuple[str, type[FakeAtomHandler]],
 ) -> None:
     base_url, handler = fake_atom
@@ -162,6 +162,36 @@ def test_water_sends_only_request_id_and_accepts_202(
     assert isinstance(body, bytes)
     assert json.loads(body) == {"request_id": "request-1"}
     assert request["authorization"] == f"Bearer {'t' * 32}"
+
+
+def test_water_sends_a_bounded_duration_for_each_request(
+    fake_atom: tuple[str, type[FakeAtomHandler]],
+) -> None:
+    base_url, handler = fake_atom
+
+    result = make_client(base_url).water("request-variable", duration_sec=120)
+
+    assert result["accepted"] is True
+    request = handler.observed_requests[-1]
+    body = request["body"]
+    assert isinstance(body, bytes)
+    assert json.loads(body) == {
+        "request_id": "request-variable",
+        "duration_sec": 120,
+    }
+
+
+@pytest.mark.parametrize("duration_sec", [0, 181, True, 1.5, "10"])
+def test_water_rejects_an_invalid_duration_before_network_access(
+    fake_atom: tuple[str, type[FakeAtomHandler]],
+    duration_sec: object,
+) -> None:
+    base_url, handler = fake_atom
+
+    with pytest.raises(ValueError, match="duration_sec"):
+        make_client(base_url).water("request-invalid", duration_sec=duration_sec)  # type: ignore[arg-type]
+
+    assert handler.observed_requests == []
 
 
 def test_stop_is_authenticated(fake_atom: tuple[str, type[FakeAtomHandler]]) -> None:

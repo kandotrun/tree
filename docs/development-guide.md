@@ -1,12 +1,12 @@
 # ベランダ自動水やりシステム 開発ガイド
 
-- Version: 0.1
-- 更新日: 2026-08-05
+- Version: 0.2
+- 更新日: 2026-08-08
 - 対象ハードウェア: M5Stack ATOM Lite + Unit Watering U101
 - 対象環境: macOS、PlatformIO、自宅LinuxミニPC、Hermes Agent
 - 関連文書: [システム設計書](./system-design.md)
 
-> この文書は実装仕様と作業手順である。掲載する設定値は実機到着前の初期値を含むため、給水量、運転時間、水分閾値、電源条件は実測後に確定する。
+> この文書は実装仕様と作業手順である。給水量、水分校正値、電源条件は実機コミッショニングの完了まで暫定値として扱う。
 
 ## 1. 開発の全体像
 
@@ -174,7 +174,7 @@ lib_deps =
 #define API_TOKEN "CHANGE_ME_TO_A_LONG_RANDOM_VALUE"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.1.0"
+#define FIRMWARE_VERSION "0.2.0"
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
 #define LED_PIN 27
@@ -183,8 +183,8 @@ lib_deps =
 #define WATERING_ARMED false
 
 #define DOSE_MS 10000UL
-#define MAX_RUN_MS 15000UL
-#define COOLDOWN_MS 600000UL
+#define MAX_RUN_MS 180000UL
+#define COOLDOWN_MS 0UL
 #define BOOT_GUARD_MS 300000UL
 ```
 
@@ -203,7 +203,10 @@ bridge/*.db
 .pio/
 ```
 
-`DOSE_MS=10000`は流量校正用の暫定10秒である。木への本番給水へ使わない。
+`DOSE_MS=10000`は`duration_sec`を省略するBridge/Hermes用の標準10秒である。
+管理画面はリクエストごとに1-180秒を指定できるが、`MAX_RUN_MS`と
+ファームウェアの180秒絶対上限を超えられない。
+`COOLDOWN_MS=0`のため、完了または手動停止の直後から別`request_id`の次要求を受け付ける。
 
 ## 7. ファームウェア責務
 
@@ -246,10 +249,9 @@ stateDiagram-v2
     [*] --> BOOT_GUARD
     BOOT_GUARD --> IDLE: BOOT_GUARD_MS経過
     IDLE --> WATERING: 認証・新規request_id・安全条件OK
-    WATERING --> COOLDOWN: DOSE_MS経過
-    WATERING --> COOLDOWN: MAX_RUN_MS到達
-    WATERING --> COOLDOWN: stop要求
-    COOLDOWN --> IDLE: COOLDOWN_MS経過
+    WATERING --> IDLE: 要求時間またはDOSE_MS経過
+    WATERING --> IDLE: MAX_RUN_MS到達
+    WATERING --> IDLE: stop要求
 ```
 
 ### 状態ごとのGPIO
@@ -259,12 +261,12 @@ stateDiagram-v2
 | BOOT_GUARD | LOW | 拒否 |
 | IDLE | LOW | 受付可能 |
 | WATERING | HIGH | 拒否 |
-| COOLDOWN | LOW | 拒否 |
+| COOLDOWN（互換） | LOW | `COOLDOWN_MS>0`を明示設定した場合だけ拒否 |
 | ERROR | LOW | 拒否 |
 
 `delay(DOSE_MS)`は使わず、`millis()`を使った非ブロッキング制御にする。
 これにより給水中でも緊急停止と状態確認を受けられる。
-給水開始時にはメインループから独立したone-shotタイマーを`MAX_RUN_MS`で起動し、ループ停止時もGPIO26をLOWへ落とす。
+給水開始時にはメインループから独立したone-shotタイマーを受理済みの要求時間で起動し、ループ停止時もその時間でGPIO26をLOWへ落とす。要求時間は`MAX_RUN_MS`と180秒絶対上限を超えられない。
 タスクWatchdogはその予備停止手段とする。
 
 ## 10. HTTP API仕様
@@ -302,11 +304,15 @@ Authorization: Bearer <API_TOKEN>
   "uptime_ms": 123456,
   "wifi_rssi": -58,
   "moisture_adc": 1512,
+  "armed": true,
+  "default_duration_sec": 10,
+  "max_duration_sec": 180,
+  "scheduled_ms": 10000,
   "last_request_id": "01J...",
   "remaining_ms": 0,
   "last_runtime_ms": 10000,
   "last_stop_reason": "DOSE_COMPLETE",
-  "firmware_version": "0.1.0"
+  "firmware_version": "0.2.0"
 }
 ```
 
@@ -316,11 +322,17 @@ Authorization: Bearer <API_TOKEN>
 
 ```json
 {
-  "request_id": "01J..."
+  "request_id": "01J...",
+  "duration_sec": 180
 }
 ```
 
-クライアントから`duration_ms`や水量を受け付けない。ファームウェアに保存した標準1回分だけを実行する。
+`duration_sec`は省略可能な整数で、1-180秒かつ`MAX_RUN_MS`以内だけを受け付ける。
+省略時は`DOSE_MS`を使う。`duration_ms`、小数、0、負数、上限超過、水量は拒否する。
+要求値に関係なく、独立one-shotタイマーと180秒絶対上限を解除できない。
+低レベルの`AtomClient.water(duration_sec=...)`はファームウェアAPIをそのまま
+表現するため指定を受け付けるが、出荷するBridge service/CLIとHermesコマンドは
+この引数を公開・送信しない。現在のユーザー向け指定経路は管理画面の確認付き手動操作だけである。
 
 成功時:
 
@@ -333,7 +345,7 @@ HTTP/1.1 202 Accepted
   "accepted": true,
   "request_id": "01J...",
   "state": "WATERING",
-  "scheduled_ms": 10000
+  "scheduled_ms": 180000
 }
 ```
 
@@ -341,11 +353,11 @@ HTTP/1.1 202 Accepted
 
 | Status | 意味 |
 |---:|---|
-| 400 | `request_id`がない、形式不正 |
+| 400 | `request_id`がない・形式不正、または指定した`duration_sec`が形式不正・範囲外 |
 | 401 | 認証失敗 |
 | 409 | 給水中、または同じ`request_id` |
 | 423 | BOOT_GUARD、ERROR、または`WATERING_ARMED=false` |
-| 429 | クールダウン中 |
+| 429 | 旧版または`COOLDOWN_MS>0`設定時のクールダウン中 |
 
 ### 10.5 `POST /v1/stop`
 
@@ -354,8 +366,29 @@ HTTP/1.1 202 Accepted
 ```json
 {
   "stopped": true,
-  "state": "COOLDOWN"
+  "state": "IDLE"
 }
+```
+
+### 10.6 `GET /` 管理画面
+
+ATOM自身がgzip圧縮したHTML/CSS/JavaScriptを配信する。外部CDNや別サーバーは使わない。
+
+- APIトークンは画面へ埋め込まず、利用者が入力する
+- トークンは現在のタブの`sessionStorage`だけに保持する
+- 水分ADCと直近90サンプルの推移を表示する
+- 乾燥点・湿潤点の2点校正値はブラウザの`localStorage`へ保存する
+- 校正前は乾燥度を表示せず、校正後も参考値に限定する
+- 1-180秒の手動給水は確認ダイアログを経て1回だけ送信する
+- 通信結果が不明な給水要求は自動再送しない
+- 給水中だけ緊急停止ボタンを有効にする
+
+管理画面の校正値はブラウザごとに独立し、ファームウェアの自動給水条件には使わない。
+HTMLを変更したら、埋め込みヘッダーを再生成する。
+
+```bash
+python3 firmware/scripts/generate_dashboard_header.py
+python3 firmware/scripts/generate_dashboard_header.py --check
 ```
 
 ## 11. 水分センサー
@@ -364,7 +397,8 @@ GPIO32のADC値を取得する。
 
 - 一度の値では判断しない
 - 1秒間隔で複数回読み、中央値または移動平均を使う
-- 初期版では状態APIとログへ出すだけにする
+- 状態APIとログに加え、管理画面で生ADCと短期推移を表示する
+- 管理画面の2点校正による乾燥度は参考表示だけに使う
 - 値の校正前に自動給水の開始条件へ使わない
 
 校正データとして最低限記録する。
@@ -443,6 +477,10 @@ U101を接続し、吐出先を計量容器へ固定してから、ローカル�
 - [ ] 給水中の再要求が409
 - [ ] 同じ`request_id`の再送で再給水しない
 - [ ] `/v1/stop`で直ちに停止する
+- [ ] `duration_sec=1`と`180`が受理され、それぞれ指定時間で停止する
+- [ ] `duration_sec=0`、`181`、小数、文字列、`null`が400で拒否される
+- [ ] ブラウザ管理画面から状態、水分ADC、給水確認、停止を操作できる
+- [ ] 管理画面のトークンがURL、HTML、`localStorage`へ残らない
 
 ### Test 4: 再起動
 
@@ -467,7 +505,8 @@ flow_ml_s:      ____ mL/s
 採用MAX_RUN_MS: ____ ms
 ```
 
-校正後に`config.h`を更新し、再ビルド・再書き込みする。
+管理画面の手動給水は再書き込みなしで秒数を変更できる。
+Bridge/Hermesが使う標準1回分を変える場合だけ`DOSE_MS`を更新し、再ビルド・再書き込みする。
 
 ## 16. ミニPC側の責務
 
@@ -644,7 +683,7 @@ Hermesへ次の制約を与える。
 - 失敗時に勝手に再実行しない
 - CLIの`message_ja`をそのまま結果として返す
 - `UNKNOWN`では目視確認を依頼する
-- クールダウン拒否を成功扱いにしない
+- 旧版または任意設定のクールダウン拒否を成功扱いにしない
 
 HermesがMacBook上でコマンドを実行できない場合でも問題ない。MacBookはファームウェア書き込みにだけ使い、通常運用はHermesから自宅ミニPCを経由する。
 
@@ -730,7 +769,7 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 | FW-04 | 誤認証 | 401、pump OFF |
 | FW-05 | 同じrequest_id | 2回目を拒否 |
 | FW-06 | 給水中の再要求 | 409 |
-| FW-07 | クールダウン中の要求 | 429 |
+| FW-07 | 給水完了直後の別ID要求 | 待機なしで受付 |
 | FW-08 | 通信断 | ローカルタイマーで停止 |
 | FW-09 | MAX_RUN到達 | 強制停止 |
 | FW-10 | stop要求 | 直ちに停止 |
@@ -750,7 +789,7 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 | BR-07 | refill | 18,000mLへリセット |
 | BR-08 | 72時間未満のschedule | 給水しない |
 | BR-09 | 受付後に緊急停止 | UNKNOWN、残量を減算せず自動再実行しない |
-| BR-10 | POST時に競合またはクールダウン応答 | UNKNOWNとして固定し、自動再実行しない |
+| BR-10 | POST時に競合または旧版クールダウン応答 | UNKNOWNとして固定し、自動再実行しない |
 
 ### 現物試験
 
@@ -817,6 +856,8 @@ LAN内HTTPのため通信自体は暗号化されない。初期版では「外�
 - [ ] 非ブロッキング停止タイマー
 - [ ] 重複拒否
 - [ ] 水分ADC表示
+- [ ] 組み込みWeb管理画面
+- [ ] 1-180秒の境界値検証
 - [ ] 机上試験合格
 
 ### Bridge v0.1.0

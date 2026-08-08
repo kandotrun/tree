@@ -53,6 +53,8 @@ jobs:
         run: python -m pip install 'platformio==6.1.19'
       - name: Create safe build-only firmware config
         run: cp firmware/include/config.example.h firmware/include/config.h
+      - name: Verify embedded dashboard is current
+        run: python firmware/scripts/generate_dashboard_header.py --check
       - name: Test pure firmware logic
         working-directory: firmware
         run: pio test -e native

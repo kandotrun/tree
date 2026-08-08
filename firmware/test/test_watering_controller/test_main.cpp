@@ -88,6 +88,58 @@ void test_dose_timer_stops_locally_without_network() {
   TEST_ASSERT_EQUAL_STRING("DOSE_COMPLETE", controller.last_stop_reason());
 }
 
+void test_requested_duration_controls_exactly_one_dose() {
+  ControllerConfig config = safe_config();
+  config.max_run_ms = 180000U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(StartResult::Accepted),
+      static_cast<int>(controller.start("request-variable", 300001U, 42000U)));
+  TEST_ASSERT_EQUAL_UINT32(42000U, controller.scheduled_ms());
+  TEST_ASSERT_EQUAL_UINT32(1U, controller.remaining_ms(342000U));
+
+  controller.tick(342001U);
+
+  TEST_ASSERT_FALSE(controller.pump_on());
+  TEST_ASSERT_EQUAL_UINT32(42000U, controller.last_runtime_ms());
+  TEST_ASSERT_EQUAL_STRING("DOSE_COMPLETE", controller.last_stop_reason());
+}
+
+void test_requested_duration_at_hard_limit_completes_as_dose() {
+  ControllerConfig config = safe_config();
+  config.max_run_ms = 180000U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  controller.start("request-three-minutes", 300001U, 180000U);
+
+  controller.tick(480000U);
+  TEST_ASSERT_TRUE(controller.pump_on());
+  controller.tick(480001U);
+
+  TEST_ASSERT_FALSE(controller.pump_on());
+  TEST_ASSERT_EQUAL_UINT32(180000U, controller.last_runtime_ms());
+  TEST_ASSERT_EQUAL_STRING("DOSE_COMPLETE", controller.last_stop_reason());
+}
+
+void test_requested_duration_outside_local_limit_is_rejected() {
+  ControllerConfig config = safe_config();
+  config.max_run_ms = 180000U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(StartResult::InvalidDuration),
+      static_cast<int>(controller.start("request-zero", 300001U, 0U)));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(StartResult::InvalidDuration),
+      static_cast<int>(controller.start("request-too-long", 300002U, 180001U)));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(State::Idle),
+                        static_cast<int>(controller.state()));
+  TEST_ASSERT_FALSE(controller.pump_on());
+}
+
 void test_absolute_max_runtime_wins_if_dose_is_longer() {
   ControllerConfig config = safe_config();
   config.dose_ms = 20000U;
@@ -145,6 +197,51 @@ void test_busy_cooldown_and_duplicate_requests_are_rejected() {
   controller.tick(910001U);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(StartResult::Duplicate),
                         static_cast<int>(controller.start("request-1", 910002U)));
+}
+
+void test_zero_cooldown_accepts_next_request_immediately_after_dose() {
+  ControllerConfig config = safe_config();
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StartResult::Accepted),
+                        static_cast<int>(controller.start("request-1", 300001U)));
+
+  controller.tick(310001U);
+
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(State::Idle),
+                        static_cast<int>(controller.state()));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StartResult::Accepted),
+                        static_cast<int>(controller.start("request-2", 310001U)));
+}
+
+void test_zero_cooldown_accepts_next_request_immediately_after_manual_stop() {
+  ControllerConfig config = safe_config();
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+  controller.start("request-1", 300001U);
+
+  controller.stop(302001U);
+
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(State::Idle),
+                        static_cast<int>(controller.state()));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StartResult::Accepted),
+                        static_cast<int>(controller.start("request-2", 302001U)));
+}
+
+void test_zero_cooldown_stop_while_idle_does_not_lock_next_request() {
+  ControllerConfig config = safe_config();
+  config.cooldown_ms = 0U;
+  WateringController controller(config, 0U);
+  advance_to_idle(controller);
+
+  controller.stop(300001U);
+
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(State::Idle),
+                        static_cast<int>(controller.state()));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StartResult::Accepted),
+                        static_cast<int>(controller.start("request-1", 300001U)));
 }
 
 void test_restored_request_id_is_rejected_after_reboot() {
@@ -223,10 +320,17 @@ int main(int, char**) {
   RUN_TEST(test_unarmed_controller_rejects_after_boot_guard);
   RUN_TEST(test_valid_request_starts_one_fixed_dose);
   RUN_TEST(test_dose_timer_stops_locally_without_network);
+  RUN_TEST(test_requested_duration_controls_exactly_one_dose);
+  RUN_TEST(test_requested_duration_at_hard_limit_completes_as_dose);
+  RUN_TEST(test_requested_duration_outside_local_limit_is_rejected);
   RUN_TEST(test_absolute_max_runtime_wins_if_dose_is_longer);
   RUN_TEST(test_manual_stop_is_immediate_and_enters_cooldown);
   RUN_TEST(test_stop_while_idle_enters_cooldown_without_claiming_runtime);
   RUN_TEST(test_busy_cooldown_and_duplicate_requests_are_rejected);
+  RUN_TEST(test_zero_cooldown_accepts_next_request_immediately_after_dose);
+  RUN_TEST(
+      test_zero_cooldown_accepts_next_request_immediately_after_manual_stop);
+  RUN_TEST(test_zero_cooldown_stop_while_idle_does_not_lock_next_request);
   RUN_TEST(test_restored_request_id_is_rejected_after_reboot);
   RUN_TEST(test_invalid_request_ids_are_rejected);
   RUN_TEST(test_millis_rollover_preserves_timers);
