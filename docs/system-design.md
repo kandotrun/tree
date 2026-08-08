@@ -1,6 +1,6 @@
 # ベランダ樹木 自動水やりシステム設計書
 
-- Version: 1.3
+- Version: 1.4
 - 更新日: 2026-08-08
 - 対象: 屋根付きベランダの木1本、8号鉢程度
 - 状態: ATOM LiteおよびUnit Watering U101を購入済み
@@ -8,11 +8,13 @@
 
 ## 1. 結論
 
-ATOM Liteを自宅LAN内の専用給水デバイスとして動かし、自宅ミニPCをHermes Agentとの中継点にする。
+ATOM Liteを自宅LAN内の専用給水デバイスとして動かし、常時稼働NASをHermes Agentと公開Webの中継点にする。
 
 ```mermaid
 flowchart LR
-    H[Hermes Agent] -->|SSHなど| M[自宅ミニPC]
+    W[公開Web利用者] -->|HTTPS| C[Cloudflare Tunnel]
+    C --> M[自宅NAS public gateway]
+    H[Hermes Agent] -->|SSHなど| M
     M -->|LAN内HTTP| A[ATOM Lite]
     A -->|Grove GPIO| U[Unit Watering U101]
     U --> P[鉢の木]
@@ -28,14 +30,15 @@ ATOM LiteはLinux端末ではない。ESP32上で専用ファームウェアを�
 - モバイル向け管理画面の配信
 - 異常時の給水拒否
 
-Tailscaleを使う場合はATOM Liteではなく自宅ミニPCに導入する。ATOM Liteはインターネットへ直接公開しない。
+TailscaleとCloudflare TunnelはATOM LiteではなくNASに導入する。ATOM Liteはインターネットへ直接公開しない。
 
 ## 2. 目的
 
-現在、木への給水を忘れることがあるため、次の2通りで安全に給水できる状態を作る。
+現在、木への給水を忘れることがあるため、次の3通りで安全に給水できる状態を作る。
 
 1. Hermes Agentへ「木に水をあげて」と依頼して1回分を給水する
-2. 流量校正と安定試験の完了後、3日に1回を目安に自動給水する
+2. 公開Webから誰でも固定10秒だけ給水する
+3. 流量校正と安定試験の完了後、3日に1回を目安に自動給水する
 
 システムの最優先事項は、給水開始よりも「必ず予定時間で停止すること」である。
 
@@ -51,7 +54,7 @@ Tailscaleを使う場合はATOM Liteではなく自宅ミニPCに導入する。
 | 水道 | ベランダにはなし |
 | 設置場所 | 屋根付き、ガラス手すりのベランダ |
 | 通信 | 自宅2.4GHz Wi-Fiを利用可能 |
-| 中継機 | 自宅NASまたはミニPC。ミニPCを優先 |
+| 中継機 | 常時稼働NAS |
 | 電源 | モバイルバッテリーを所有済み。長期稼働は未検証 |
 
 ## 4. 購入品
@@ -157,6 +160,7 @@ flowchart TB
 | F-06 | 残量推定 | 成功した給水量から20Lタンクの残量を概算する |
 | F-07 | オフライン通知 | ATOMへ接続できなければ成功扱いにせず、Hermesへ失敗を返す |
 | F-08 | Web管理画面 | 水分値と推移を確認し、1-180秒の1回給水、押下中だけの長時間給水、緊急停止を行う |
+| F-09 | 公開Web給水 | 登録不要で固定10秒だけ給水し、全体cooldownとrolling quotaを適用する |
 
 ## 8. 非機能要件
 
@@ -178,6 +182,9 @@ flowchart TB
 - APIと管理画面は意図的にアプリケーション認証を持たない
 - ATOMへ到達できるLAN内端末は給水命令を送れるため、信頼済みLANまたは分離したIoT VLANだけへ接続する
 - 初期版のHTTPは信頼できるWPA2/WPA3 LAN内だけで使い、ゲスト端末や不特定端末と同じネットワークへ置かない
+- 公開DNSとTunnelはNASのloopback gatewayだけへ向け、ATOMへ直接向けない
+- 公開gatewayは固定10秒、全体60秒cooldown、1時間6回、24時間24回を永続的に適用する
+- 公開gatewayはhold mode、任意秒数、水量、ATOMの内部情報を公開しない
 - LANの認証情報が漏えいした疑いがある場合は、Wi-Fi認証情報を交換する
 - Hermesには任意のHTTPや任意の秒数ではなく、固定コマンドだけを許可する
 - Wi-FiパスワードをGitへコミットしない
@@ -185,7 +192,7 @@ flowchart TB
 ### 保守性
 
 - 給水量と運転時間を設定値として分離する
-- 実行履歴と失敗理由をミニPCへ記録する
+- 実行履歴と失敗理由をNASへ記録する
 - ATOMのIPアドレスはルーターのDHCP予約で固定する
 - 初回はUSB書き込み、OTA更新は安定後の任意機能とする
 
@@ -193,11 +200,15 @@ flowchart TB
 
 ### 採用方式
 
-Hermes Agentから自宅ミニPCへ接続し、ミニPCからATOM LiteのLAN内HTTP APIを呼び出す。
+Hermes AgentとCloudflare TunnelはNASへ接続し、NASからATOM LiteのLAN内HTTP APIを呼び出す。
 
 ```text
 Hermes Agent
-  -> 自宅ミニPCの固定コマンド
+  -> 自宅NASの固定コマンド
+Public browser
+  -> Cloudflare Tunnel
+  -> 自宅NASの固定公開gateway
+NAS
   -> http://ATOMのローカルIP/v1/water
   -> ATOMがローカルタイマーでポンプ制御
 ```
@@ -262,8 +273,9 @@ M5Stack公式資料にある5 Wはメーカー公称値であり、本個体の�
 180秒を超える場合は、利用者がボタンを押し続けるholdモードだけを使う。
 hold開始要求は時間値を受け付けず、クライアントがリース長や10分上限を変更できない。
 低レベルの`AtomClient.water()`はAPI契約を表現する任意の`duration_sec`を持つ。
-一方、出荷するBridge service/CLIとHermesコマンドは秒数を公開・送信せず、
-引き続き「標準1回分」だけを実行する。現在のユーザー向け可変秒数経路は管理画面だけである。
+一方、Bridge CLIとHermesコマンドは秒数を公開・送信せず「標準1回分」だけを実行する。
+公開gatewayは利用者の値を受け取らず、server側の固定10秒だけを送信する。
+ユーザー向け可変秒数経路はLAN内の組み込み管理画面だけである。
 同じ`request_id`と給水中の並行要求は拒否するが、完了後の待機時間は設けない。
 
 ## 11. 水分センサーの扱い

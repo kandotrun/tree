@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "balcony-watering-bridge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fail-safe Linux bridge for an M5Stack balcony watering controller"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,8 @@ test = [
 water-tree = "balcony_watering.cli:water_main"
 water-tree-status = "balcony_watering.cli:status_main"
 water-tree-stop = "balcony_watering.cli:stop_main"
+tree-public-gateway = "balcony_watering.public_main:main"
+tree-moisture-logger = "balcony_watering.moisture_logger:main"
 water-tree-refill = "balcony_watering.cli:refill_main"
 water-tree-schedule = "balcony_watering.cli:schedule_main"
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=Balcony watering moisture telemetry logger
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/balcony-watering/telemetry/app
+EnvironmentFile=%h/apps/balcony-watering/shared/telemetry.env
+ExecStart=/usr/bin/python3 -m balcony_watering.moisture_logger
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=10s
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

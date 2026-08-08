@@ -20,10 +20,15 @@ that the pump turns off locally even if Wi-Fi, the bridge, or Hermes fails.
 - On ambiguous hold start or failed keepalive, send best-effort stop without
   retrying start; loss of heartbeats must still stop the pump locally.
 - Persist the accepted request ID before physically enabling the pump.
-- Keep the API LAN-only. Never add port forwarding, public ingress, or secrets.
-- The HTTP API and embedded dashboard intentionally have no application-layer
-  authentication. Treat the trusted LAN as the only access boundary; anyone
-  who can reach the ATOM can issue pump commands.
+- Keep the ATOM API LAN-only. Never route public DNS, port forwarding, or a
+  Tunnel directly to the ATOM or its embedded dashboard.
+- The only approved public ingress is the NAS gateway. It exposes a fixed
+  short dose and stop, binds to loopback behind Cloudflare Tunnel, persists a
+  global cooldown and rolling quotas in SQLite, rejects client-selected
+  duration, and never exposes hold mode.
+- The ATOM API, embedded dashboard, and public gateway intentionally have no
+  application-layer authentication. The public gateway is anonymous by design;
+  its bounded command surface and device-local cutoff are the safety boundary.
 - Keep automatic scheduling disabled until calibration, 72-hour power testing,
   siphon/drainage/leak checks, and a two-week supervised pilot pass.
 - Do not use moisture ADC values as an automatic start condition until real
@@ -60,6 +65,6 @@ claims must be marked unverified until exercised on the physical device.
 ## Repository map
 
 - `firmware/`: ATOM Lite firmware and host-side state-machine tests
-- `bridge/`: Linux CLI, SQLite state, and tests
+- `bridge/`: NAS CLI/public gateway, SQLite state, and tests
 - `docs/`: design and staged commissioning procedure
 - `scripts/`: flashing and serial-monitor helpers

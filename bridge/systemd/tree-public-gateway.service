@@ -1,0 +1,18 @@
+[Unit]
+Description=Anonymous balcony watering gateway
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/balcony-watering/current/app
+EnvironmentFile=%h/apps/balcony-watering/shared/public.env
+ExecStart=/usr/bin/python3 -m balcony_watering.public_main
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

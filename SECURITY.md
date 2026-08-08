@@ -23,3 +23,13 @@ production log.
 Only the latest `main` branch is supported before the first stable release.
 Hardware operation remains experimental until the commissioning checklist in
 `docs/development-guide.md` is complete.
+
+## Public gateway boundary
+
+The ATOM Lite remains LAN-only. Do not expose its port, embedded dashboard, or
+`/v1/*` routes directly to the Internet. The supported public path terminates at
+the NAS gateway described in `docs/public-gateway.md`. It intentionally permits
+anonymous use but exposes only a fixed short dose, status, and stop, with
+persistent global cooldown and rolling quotas. Reports that bypass those bounds,
+reach hold mode, select a duration, race the reservation, or disclose private
+device/network data are security issues.

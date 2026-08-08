@@ -2,8 +2,9 @@
 
 [![CI](https://github.com/kandotrun/tree/actions/workflows/ci.yml/badge.svg)](https://github.com/kandotrun/tree/actions/workflows/ci.yml)
 
-A fail-safe, LAN-only watering controller for one balcony tree, built with an
-M5Stack ATOM Lite, Unit Watering U101, and a small Linux bridge.
+A fail-safe watering controller for one balcony tree, built with an M5Stack
+ATOM Lite, Unit Watering U101, and a NAS bridge. The device stays LAN-only;
+an anonymous, tightly bounded public gateway can be exposed separately.
 
 > [!CAUTION]
 > This project controls a real water pump. Keep the outlet over a measuring
@@ -16,7 +17,9 @@ M5Stack ATOM Lite, Unit Watering U101, and a small Linux bridge.
 ```mermaid
 flowchart LR
     W[LAN browser] -->|bounded dose or leased hold| A[ATOM Lite]
-    H[Hermes Agent] -->|fixed command| B[Linux bridge]
+    P[Public browser] -->|HTTPS| C[Cloudflare Tunnel]
+    C -->|loopback HTTP| B[NAS bridge]
+    H[Hermes Agent] -->|fixed command| B
     B -->|LAN-only HTTP| A[ATOM Lite]
     A -->|GPIO 26 / ADC 32| U[Unit Watering U101]
 ```
@@ -24,8 +27,8 @@ flowchart LR
 The ATOM Lite owns the physical safety boundary: pump-off boot, independent
 cutoff timers plus watchdog, five-minute boot guard, bounded-duration
 requests, a leased dead-man hold mode, request deduplication, and emergency stop. The bridge owns
-request IDs, SQLite history, tank estimation, scheduling decisions, and
-machine-readable results.
+request IDs, SQLite history, tank estimation, scheduling decisions, public
+cooldown/quotas, and machine-readable results.
 
 ## Safety model
 
@@ -53,12 +56,13 @@ machine-readable results.
   `UNKNOWN` and blocks later watering until an operator investigates.
 - Firmware starts **unarmed**. `WATERING_ARMED` must remain `false` until the
   outlet points into a measuring container and commissioning checks pass.
-- The bridge refuses public destinations, and the ATOM API must not be exposed
-  through port forwarding or public ingress.
-- The HTTP API and embedded dashboard intentionally have no application-layer
-  authentication. Anyone who can reach the ATOM can issue pump commands. Keep
-  it on a trusted WPA2/WPA3 LAN or isolated IoT VLAN, never on a guest network,
-  and rotate the Wi-Fi credentials after any LAN credential compromise.
+- The bridge refuses public ATOM destinations. Port forwarding, public DNS,
+  and Tunnel ingress must never point directly to the ATOM.
+- The ATOM API, embedded dashboard, and public gateway intentionally have no
+  application-layer authentication. Keep the ATOM on a trusted WPA2/WPA3 LAN
+  or isolated IoT VLAN. Anonymous Internet traffic reaches only the NAS gateway,
+  which fixes each run to 10 seconds, applies a global 60-second cooldown plus
+  rolling hourly/daily quotas, excludes hold mode, and always permits stop.
 
 Software safety controls reduce risk; they do not replace drainage, leak,
 siphon, power, weatherproofing, and physical inspection.
@@ -67,7 +71,7 @@ siphon, power, weatherproofing, and physical inspection.
 
 ```text
 firmware/  ESP32 firmware and host-side state-machine tests
-bridge/    Fixed-command Linux CLI, SQLite state, and tests
+bridge/    NAS CLI/public gateway, SQLite state, assets, and tests
 docs/      Japanese design and staged commissioning guide
 scripts/   Flash and serial-monitor helpers
 ```
@@ -124,11 +128,34 @@ water-tree-status    Read ATOM and tank state
 water-tree-stop      Stop the pump immediately
 water-tree-refill    Reset estimated usable tank volume
 water-tree-schedule  Water only when the configured interval is due
+tree-moisture-logger Record read-only ATOM telemetry to SQLite
 ```
 
 There is deliberately no runtime or volume argument. See
 [`bridge/README.md`](bridge/README.md) for configuration, JSON output, exit
 codes, and the optional systemd timer.
+
+### Anonymous public gateway
+
+The package also installs `tree-public-gateway`. It serves a single-action
+public page from a loopback-only NAS listener. `POST /api/water` accepts only an
+empty JSON object; the server supplies the fixed 10-second duration. The gateway
+uses an atomic SQLite reservation, a 60-second global cooldown, a six-per-hour
+limit, and a 24-per-day limit. Ambiguous device POST results are not retried and
+continue to consume quota. Hold mode and arbitrary duration are never exposed.
+
+Use Cloudflare Tunnel only from the NAS listener to the public hostname. See
+[`docs/public-gateway.md`](docs/public-gateway.md) for deployment, verification,
+and rollback.
+
+### Moisture telemetry
+
+`tree-moisture-logger` polls the LAN-only status endpoint without issuing any
+actuation command and stores calibration history in a private SQLite database.
+It defaults to a 10-second interval and 90-day retention, but recorded ADC
+values never trigger automatic watering. See
+[`docs/moisture-telemetry.md`](docs/moisture-telemetry.md) for NAS deployment,
+verification, retention, and shutdown.
 
 ## Current status
 
@@ -151,6 +178,8 @@ codes, and the optional systemd timer.
 
 - [System design (Japanese)](docs/system-design.md)
 - [Development and commissioning guide (Japanese)](docs/development-guide.md)
+- [Anonymous public gateway (Japanese)](docs/public-gateway.md)
+- [Moisture telemetry logger (Japanese)](docs/moisture-telemetry.md)
 - [Agent and contributor rules](AGENTS.md)
 - [Security policy](SECURITY.md)
 

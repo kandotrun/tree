@@ -1,29 +1,31 @@
 # ベランダ自動水やりシステム 開発ガイド
 
-- Version: 0.4
+- Version: 0.5
 - 更新日: 2026-08-08
 - 対象ハードウェア: M5Stack ATOM Lite + Unit Watering U101
-- 対象環境: macOS、PlatformIO、自宅LinuxミニPC、Hermes Agent
+- 対象環境: macOS、PlatformIO、常時稼働NAS、Hermes Agent、Cloudflare Tunnel
 - 関連文書: [システム設計書](./system-design.md)
 
 > この文書は実装仕様と作業手順である。給水量、水分校正値、電源条件は実機コミッショニングの完了まで暫定値として扱う。
 
 ## 1. 開発の全体像
 
-開発対象は2つに分かれる。
+開発対象は3つに分かれる。
 
 1. ATOM Liteへ書き込むESP32ファームウェア
-2. 自宅ミニPCで動かす給水CLIとHermes連携
+2. NASで動かす給水CLIとHermes連携
+3. NASで動かす匿名公開gatewayとCloudflare Tunnel
 
 ```mermaid
 flowchart LR
     MAC[MacBook<br/>ビルド・USB書き込み] --> ATOM[ATOM Lite<br/>ESP32 firmware]
-    H[Hermes Agent] -->|SSHなど| MINI[自宅ミニPC<br/>watering CLI]
-    MINI -->|HTTP| ATOM
+    H[Hermes Agent] -->|SSHなど| MINI[自宅NAS<br/>watering CLI + public gateway]
+    WEB[公開Web] -->|Cloudflare Tunnel| MINI
+    MINI -->|LAN HTTP| ATOM
     ATOM -->|GPIO26 / GPIO32| U101[Unit Watering U101]
 ```
 
-MacBookは初回開発とファームウェア更新に使う。通常運用時はMacBookを必要としない。
+MacBookは初回開発とファームウェア更新に使う。通常運用時はMacBookを必要とせず、bridgeとTunnelはNASで常駐する。
 
 ## 2. 推奨リポジトリ構成
 
@@ -59,7 +61,7 @@ balcony-watering/
     └── serial-monitor.sh
 ```
 
-初期実装では単一リポジトリとする。ハードウェア仕様、ファームウェア、ミニPC側実装を同じ履歴で管理できるためである。
+初期実装では単一リポジトリとする。ハードウェア仕様、ファームウェア、NAS側実装を同じ履歴で管理できるためである。
 
 ## 3. ハードウェア接続
 
@@ -222,7 +224,7 @@ bridge/*.db
 - LEDとシリアルログ
 - ウォッチドッグ
 
-スケジュール、推定タンク残量、Hermes向け文章生成はミニPC側へ置く。
+スケジュール、推定タンク残量、Hermes向け文章生成はNAS側へ置く。
 
 ## 8. 起動処理
 
@@ -281,7 +283,8 @@ ATOMは自宅LAN内でのみHTTPを提供する。
 
 `/healthz`と`/v1/*`を含む全APIは、意図的にアプリケーション認証を要求しない。
 クライアントは`Authorization`ヘッダーを送らない。
-ATOMへ到達できる端末は給水命令を送れるため、信頼済みLANまたは分離したIoT VLANだけで使い、WANやゲストネットワークへ公開しない。
+ATOMへ到達できる端末は給水命令を送れるため、信頼済みLANまたは分離したIoT VLANだけで使う。
+WANへ公開する場合もATOMへ直接向けず、固定短時間とquotaを強制するNAS gatewayだけをCloudflare Tunnelへ接続する。
 
 ### 10.2 `GET /healthz`
 
@@ -335,8 +338,9 @@ ATOMへ到達できる端末は給水命令を送れるため、信頼済みLAN�
 省略時は`DOSE_MS`を使う。`duration_ms`、小数、0、負数、上限超過、水量は拒否する。
 要求値に関係なく、独立one-shotタイマーと180秒絶対上限を解除できない。
 低レベルの`AtomClient.water(duration_sec=...)`はファームウェアAPIをそのまま
-表現するため指定を受け付けるが、出荷するBridge service/CLIとHermesコマンドは
-この引数を公開・送信しない。現在のユーザー向け指定経路は管理画面の確認付き手動操作だけである。
+表現するため指定を受け付ける。Bridge CLIとHermesコマンドはこの引数を公開・送信しない。
+匿名公開gatewayは利用者の指定を受け取らずserver側の固定10秒だけを送信する。
+現在のユーザー向け可変秒数経路はLAN内管理画面の確認付き手動操作だけである。
 
 成功時:
 
@@ -442,6 +446,19 @@ HTMLを変更したら、埋め込みヘッダーを再生成する。
 python3 firmware/scripts/generate_dashboard_header.py
 python3 firmware/scripts/generate_dashboard_header.py --check
 ```
+
+### 10.9 NAS匿名公開gateway
+
+公開gatewayはATOMの管理画面をproxyせず、独立した最小UIと次のAPIだけを配信する。
+
+- `GET /api/status`: `state`、`pump`、`armed`、残り秒、水分ADC、公開quotaだけ
+- `POST /api/water`: 空のJSON objectだけ。serverが固定10秒を付与する
+- `POST /api/stop`: 空のJSON objectだけ。quotaに関係なく常時利用可能
+
+全体cooldown 60秒、rolling 1時間6回、24時間24回をSQLite transaction内で判定する。
+同時要求では1件だけを`REQUESTING`として予約し、結果不明時は再送せず`UNKNOWN`のままquotaへ含める。
+hold API、任意秒数、内部IP、Wi-Fi RSSI、ATOMのrequest IDは公開しない。
+詳細な導入とrollbackは[匿名公開gateway](./public-gateway.md)に従う。
 
 ## 11. 水分センサー
 
@@ -566,9 +583,9 @@ flow_ml_s:      ____ mL/s
 管理画面の手動給水は再書き込みなしで秒数を変更できる。
 Bridge/Hermesが使う標準1回分を変える場合だけ`DOSE_MS`を更新し、再ビルド・再書き込みする。
 
-## 16. ミニPC側の責務
+## 16. NAS側の責務
 
-ミニPC側は次を担当する。
+NAS側は次を担当する。
 
 - ATOMの疎通確認
 - `request_id`生成
@@ -579,10 +596,12 @@ Bridge/Hermesが使う標準1回分を変える場合だけ`DOSE_MS`を更新し
 - 推定タンク残量
 - 定期実行の要否判断
 - Hermes向け結果整形
+- 匿名公開UI、固定10秒、global cooldown、rolling quota
+- Cloudflare Tunnelのloopback ingress
 
-## 17. ミニPC設定
+## 17. NAS設定
 
-### 17.1 設置先
+### 17.1 CLI設置先
 
 ```text
 /opt/balcony-watering/        アプリケーション
@@ -590,6 +609,8 @@ Bridge/Hermesが使う標準1回分を変える場合だけ`DOSE_MS`を更新し
 /var/lib/balcony-watering/    SQLite DB
 /var/log/balcony-watering/    任意のログ出力
 ```
+
+匿名公開gatewayの本番layoutはNASのuser serviceを使う。`~/apps/balcony-watering/`配下へreleaseとruntime DBを分離し、MacBookやHermes hostでは常駐させない。詳細は`docs/public-gateway.md`を参照する。
 
 ### 17.2 環境変数
 
@@ -626,7 +647,7 @@ water-tree-schedule  定期実行の要否を判断し、必要な場合だけ�
 
 Hermesには原則として`water-tree`、`water-tree-status`、`water-tree-stop`だけを公開する。
 
-## 18. ミニPCの給水処理
+## 18. NASの給水処理
 
 ```text
 1. ローカルDBから未確定の直前実行を確認
@@ -723,11 +744,11 @@ SQLiteを使い、最低限次を保持する。
 
 ## 21. Hermes Agent連携
 
-Hermesから自宅ミニPCへ接続できる既存経路を利用する。ATOMへ直接接続させない。
+Hermesから自宅NASへ接続できる既存経路を利用する。ATOMへ直接接続させない。
 
 ### ツール契約
 
-| Hermes上の操作 | ミニPCで実行する固定コマンド |
+| Hermes上の操作 | NASで実行する固定コマンド |
 |---|---|
 | 木へ水をあげる | `/opt/balcony-watering/venv/bin/water-tree` |
 | 状態を確認する | `/opt/balcony-watering/venv/bin/water-tree-status` |
@@ -742,13 +763,13 @@ Hermesへ次の制約を与える。
 - `UNKNOWN`では目視確認を依頼する
 - 旧版または任意設定のクールダウン拒否を成功扱いにしない
 
-HermesがMacBook上でコマンドを実行できない場合でも問題ない。MacBookはファームウェア書き込みにだけ使い、通常運用はHermesから自宅ミニPCを経由する。
+HermesがMacBook上でコマンドを実行できない場合でも問題ない。MacBookはファームウェア書き込みにだけ使い、通常運用はHermesから自宅NASを経由する。
 
 ## 22. 定期実行
 
 最初は無効にする。流量校正、72時間電源試験、2週間の目視運用後に有効化する。
 
-ミニPCでは毎朝1回スケジュール判定を実行し、前回成功から72時間以上経過した場合だけ給水する。これにより、手動給水後の二重給水を避けられる。
+NASでは毎朝1回スケジュール判定を実行し、前回成功から72時間以上経過した場合だけ給水する。これにより、手動給水後の二重給水を避けられる。
 
 `balcony-watering-daily.timer`の例:
 
@@ -794,7 +815,7 @@ WantedBy=timers.target
 
 Wi-Fiパスワードは出力しない。
 
-### ミニPC
+### NAS
 
 - 全給水要求と結果をSQLiteへ保存
 - 5-15分間隔で`/healthz`を確認可能にする
@@ -806,15 +827,17 @@ Wi-Fiパスワードは出力しない。
 - ATOMのHTTP APIをWANへ公開しない
 - ルーターのポート転送を設定しない
 - APIと管理画面にはアプリケーション認証がないため、ATOMへ到達できるLAN内端末を信頼済みに限定する
-- ミニPCの環境ファイルを権限600にする
+- NASの環境ファイルとTunnel credentialを権限600にする
 - Hermesから実行できるコマンドを固定する
 - SSH鍵とTailscale認証をリポジトリへ入れない
 - ログへ認証情報を出さない
 - 可能ならIoT用SSIDまたはVLANを利用する
+- 公開TunnelはNAS gatewayのloopback listenerだけへ接続し、ATOMへ直接接続しない
+- 公開gatewayは固定10秒、global cooldown、rolling quota、hold非公開を維持する
 
-LAN内HTTPのため通信は暗号化されず、アプリケーション認証もない。
-初期版では「外部公開しない」「信頼済みLANまたは分離したIoT VLAN」「Hermesの呼び出し先をミニPCの固定コマンドへ限定」で保護する。
-将来、ネットワーク分離が必要になった場合はHTTPS化より先にVLANまたはゲートウェイ方式を検討する。
+ATOMまでのLAN内HTTPは暗号化されず、アプリケーション認証もない。
+ATOMを信頼済みLANへ限定し、外部HTTPSはCloudflare TunnelからNAS gatewayで終端する。
+匿名公開の安全性は本人確認ではなく、公開command surfaceの縮小、永続quota、ATOMのdevice-local cutoffで確保する。
 
 ## 25. テストケース
 
@@ -835,7 +858,7 @@ LAN内HTTPのため通信は暗号化されず、アプリケーション認証�
 | FW-11 | Wi-Fi再接続 | pump状態を変更せず再接続 |
 | FW-12 | 電源再投入 | pump OFF、BOOT_GUARD |
 
-### ミニPC
+### NAS
 
 | ID | テスト | 期待結果 |
 |---|---|---|
@@ -849,6 +872,19 @@ LAN内HTTPのため通信は暗号化されず、アプリケーション認証�
 | BR-08 | 72時間未満のschedule | 給水しない |
 | BR-09 | 受付後に緊急停止 | UNKNOWN、残量を減算せず自動再実行しない |
 | BR-10 | POST時に競合または旧版クールダウン応答 | UNKNOWNとして固定し、自動再実行しない |
+
+### 匿名公開gateway
+
+| ID | テスト | 期待結果 |
+|---|---|---|
+| PG-01 | 同時に8要求 | SQLite transactionで1件だけ受理 |
+| PG-02 | 60秒以内の再要求 | 429、ATOM POSTなし |
+| PG-03 | 1時間/24時間上限 | rolling windowが解除されるまで429 |
+| PG-04 | device POST結果不明 | 再送せずUNKNOWN、quota維持 |
+| PG-05 | foreign Origin/form POST | device side effect前に拒否 |
+| PG-06 | 公開水やり | client値を受けず固定10秒だけ送信 |
+| PG-07 | 公開stop | quota中でも転送 |
+| PG-08 | 公開status | 内部IP、RSSI、request historyを除外 |
 
 ### 現物試験
 
@@ -948,6 +984,15 @@ LAN内HTTPのため通信は暗号化されず、アプリケーション認証�
 - [ ] UNKNOWN時の再送禁止
 - [ ] Hermes固定コマンド連携
 
+### Public gateway v0.2.0
+
+- [ ] NAS user serviceとして常駐
+- [ ] Cloudflare TunnelがNAS loopbackだけへ接続
+- [ ] 固定10秒、60秒cooldown、1時間6回、24時間24回
+- [ ] holdと任意秒数を非公開
+- [ ] 同時要求と結果不明を安全側に処理
+- [ ] 公開URLから状態、給水、停止を実機確認
+
 ### Pilot v0.1
 
 - [ ] 流量校正済み
@@ -967,11 +1012,12 @@ LAN内HTTPのため通信は暗号化されず、アプリケーション認証�
 次をすべて満たした時点で初期開発を完了とする。
 
 - Hermesの明示的な依頼から木へ標準1回分を給水できる
-- HermesやミニPCとの通信断でもポンプが予定時間で停止する
+- HermesやNASとの通信断でもポンプが予定時間で停止する
 - 重複依頼による二重給水が起きない
 - 緊急停止が機能する
 - 実測した給水量が目標の10%以内に収まる
-- ATOMをインターネットへ公開していない
+- ATOMをインターネットへ直接公開していない
+- 公開WebはNAS gatewayの固定短時間とquotaを迂回できない
 - 実行ログと推定タンク残量を確認できる
 - ATOMオフライン時に成功扱いしない
 - 72時間の電源試験に合格する

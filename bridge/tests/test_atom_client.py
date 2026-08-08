@@ -9,6 +9,7 @@ from typing import ClassVar
 
 import pytest
 
+from balcony_watering import __version__
 from balcony_watering.atom_client import (
     AtomClient,
     AtomConnectionError,
@@ -29,6 +30,7 @@ class FakeAtomHandler(BaseHTTPRequestHandler):
                 "method": self.command,
                 "path": self.path,
                 "authorization": self.headers.get("Authorization"),
+                "user_agent": self.headers.get("User-Agent"),
                 "body": body,
             }
         )
@@ -90,6 +92,7 @@ def test_health_is_read_without_authorization(
 
     assert result["ok"] is True
     assert handler.observed_requests[-1]["authorization"] is None
+    assert handler.observed_requests[-1]["user_agent"] == f"balcony-watering-bridge/{__version__}"
 
 
 def test_status_is_read_without_authorization(
@@ -115,6 +118,25 @@ def test_status_accepts_empty_last_stop_reason_emitted_before_first_completion(
     result = make_client(base_url).status()
 
     assert result["last_stop_reason"] == ""
+
+
+def test_status_preserves_the_device_armed_safety_flag(
+    fake_atom: tuple[str, type[FakeAtomHandler]],
+) -> None:
+    base_url, handler = fake_atom
+    handler.route_responses[("GET", "/v1/status")] = (
+        200,
+        b'{"state":"IDLE","pump":false,"armed":true}',
+    )
+
+    assert make_client(base_url).status()["armed"] is True
+
+    handler.route_responses[("GET", "/v1/status")] = (
+        200,
+        b'{"state":"IDLE","pump":false,"armed":1}',
+    )
+    with pytest.raises(AtomProtocolError, match="armed"):
+        make_client(base_url).status()
 
 
 def test_status_omits_unknown_fields_and_rejects_invalid_state(

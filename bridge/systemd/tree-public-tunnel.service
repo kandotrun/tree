@@ -1,0 +1,17 @@
+[Unit]
+Description=Cloudflare Tunnel for the balcony watering public gateway
+Wants=network-online.target
+After=network-online.target tree-public-gateway.service
+Requires=tree-public-gateway.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cloudflared --no-autoupdate tunnel run --token-file %h/apps/balcony-watering/shared/tunnel.token
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
