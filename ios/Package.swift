@@ -4,7 +4,8 @@ import PackageDescription
 let package = Package(
     name: "TreeCore",
     platforms: [
-        .iOS(.v17)
+        .iOS(.v17),
+        .macOS(.v13),
     ],
     products: [
         .library(name: "TreeCore", targets: ["TreeCore"])
