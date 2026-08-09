@@ -139,7 +139,33 @@ final class AtomAPIClientTests: XCTestCase {
         XCTAssertEqual(json.count, 2)
     }
 
-    func testTransportFailureDoesNotRetryWatering() async {
+    func testRedirectDelegateDeclinesRedirect() throws {
+        let delegate = NoRedirectURLSessionDelegate()
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.dataTask(with: URL(string: "http://192.168.1.50/v1/status")!)
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: URL(string: "http://192.168.1.50/v1/status")!,
+            statusCode: 302,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Location": "https://example.com/collect"]
+        ))
+        let redirected = URLRequest(url: URL(string: "https://example.com/collect")!)
+        let completion = expectation(description: "redirect decision")
+
+        delegate.urlSession(
+            session,
+            task: task,
+            willPerformHTTPRedirection: response,
+            newRequest: redirected
+        ) { request in
+            XCTAssertNil(request)
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 1)
+    }
+
+    func testTransportFailureDoesNotRetryWatering() async throws {
         URLProtocolStub.handler = { _ in
             .failure(URLError(.timedOut))
         }

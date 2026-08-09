@@ -8,6 +8,18 @@ public enum AtomAPIError: Error, Equatable, Sendable {
     case http(status: Int, code: String)
 }
 
+final class NoRedirectURLSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
 public struct WateringAcknowledgement: Codable, Equatable, Sendable {
     public let accepted: Bool
     public let requestID: String
@@ -93,6 +105,7 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
     private let endpoint: DeviceEndpoint
     private let session: URLSession
     private let requestTimeout: TimeInterval
+    private let retainedSessionDelegate: NoRedirectURLSessionDelegate?
 
     public init(
         endpoint: DeviceEndpoint,
@@ -102,6 +115,19 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
         self.endpoint = endpoint
         self.session = session
         self.requestTimeout = requestTimeout
+        retainedSessionDelegate = nil
+    }
+
+    private init(
+        endpoint: DeviceEndpoint,
+        session: URLSession,
+        requestTimeout: TimeInterval,
+        retainedSessionDelegate: NoRedirectURLSessionDelegate
+    ) {
+        self.endpoint = endpoint
+        self.session = session
+        self.requestTimeout = requestTimeout
+        self.retainedSessionDelegate = retainedSessionDelegate
     }
 
     public convenience init(endpoint: DeviceEndpoint, requestTimeout: TimeInterval = 5) {
@@ -109,10 +135,16 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = requestTimeout
         configuration.timeoutIntervalForResource = requestTimeout
+        let delegate = NoRedirectURLSessionDelegate()
         self.init(
             endpoint: endpoint,
-            session: URLSession(configuration: configuration),
-            requestTimeout: requestTimeout
+            session: URLSession(
+                configuration: configuration,
+                delegate: delegate,
+                delegateQueue: nil
+            ),
+            requestTimeout: requestTimeout,
+            retainedSessionDelegate: delegate
         )
     }
 

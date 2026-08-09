@@ -20,6 +20,17 @@ final class DeviceEndpointTests: XCTestCase {
         }
     }
 
+    func testRejectsHostnamesThatMimicPrivateAddresses() {
+        for value in [
+            "http://192.168.1.50.example.com",
+            "http://fc-attacker.example",
+        ] {
+            XCTAssertThrowsError(try DeviceEndpoint(value)) { error in
+                XCTAssertEqual(error as? DeviceEndpointError, .nonLocalHost)
+            }
+        }
+    }
+
     func testRejectsCredentialsPathQueryAndFragment() {
         let invalidValues = [
             "http://user:pass@192.168.1.50",

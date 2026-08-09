@@ -48,8 +48,11 @@ public struct DeviceEndpoint: Equatable, Sendable {
         if host == "localhost" || host == "::1" || host.hasSuffix(".local") {
             return true
         }
-        let octets = host.split(separator: ".").compactMap { UInt8($0) }
-        if octets.count == 4 {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        if parts.count == 4 {
+            let parsed = parts.map { UInt8($0) }
+            guard parsed.allSatisfy({ $0 != nil }) else { return false }
+            let octets = parsed.compactMap { $0 }
             switch (octets[0], octets[1]) {
             case (10, _), (127, _), (192, 168), (169, 254):
                 return true
@@ -60,6 +63,10 @@ public struct DeviceEndpoint: Equatable, Sendable {
             }
         }
         let lowercase = host.lowercased()
+        guard lowercase.contains(":"),
+              lowercase.allSatisfy({ $0.isHexDigit || $0 == ":" }) else {
+            return false
+        }
         return lowercase.hasPrefix("fc")
             || lowercase.hasPrefix("fd")
             || lowercase.hasPrefix("fe8")
