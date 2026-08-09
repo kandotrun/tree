@@ -24,6 +24,13 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn("scenePhase", source)
         self.assertIn("handleSceneInactive", source)
 
+    def test_ci_captures_setup_and_dashboard_screens(self) -> None:
+        workflow = (IOS_ROOT.parent / ".github/workflows/ios.yml").read_text()
+        view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text()
+        self.assertIn("TreeWatering-setup.png", workflow)
+        self.assertIn("TreeWatering-dashboard.png", workflow)
+        self.assertIn('"-ui-preview"', view_model)
+
     def test_setup_does_not_force_keyboard_on_first_launch(self) -> None:
         setup = (IOS_ROOT / "TreeWatering/Features/SetupView.swift").read_text()
         self.assertNotIn(".onAppear { endpointFocused", setup)

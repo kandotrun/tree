@@ -42,6 +42,7 @@ final class DashboardViewModel: ObservableObject {
     @Published var notice: AppNotice?
 
     private let defaults: UserDefaults
+    private let isPreviewMode: Bool
     private var api: AtomAPIClient?
     private var coordinator: WateringCoordinator?
     private var pollingTask: Task<Void, Never>?
@@ -50,6 +51,20 @@ final class DashboardViewModel: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+#if DEBUG
+        let previewMode = ProcessInfo.processInfo.arguments.contains("-ui-preview")
+#else
+        let previewMode = false
+#endif
+        isPreviewMode = previewMode
+        if previewMode,
+           let endpoint = try? DeviceEndpoint("http://127.0.0.1") {
+            endpointInput = endpoint.baseURL.absoluteString
+            install(endpoint: endpoint)
+            status = Self.makePreviewStatus()
+            connectionState = .online
+            return
+        }
         let saved = defaults.string(forKey: Self.endpointDefaultsKey) ?? ""
         endpointInput = saved
         if let endpoint = try? DeviceEndpoint(saved) {
@@ -61,6 +76,7 @@ final class DashboardViewModel: ObservableObject {
     var isOnline: Bool { connectionState == .online }
 
     var endpointHost: String {
+        if isPreviewMode { return "プレビュー" }
         guard let value = defaults.string(forKey: Self.endpointDefaultsKey),
               let host = URL(string: value)?.host else { return "未設定" }
         return host
@@ -107,6 +123,10 @@ final class DashboardViewModel: ObservableObject {
 
     func activate() {
         isSceneActive = true
+        if isPreviewMode {
+            connectionState = .online
+            return
+        }
         guard api != nil else {
             connectionState = .unconfigured
             return
@@ -325,5 +345,10 @@ final class DashboardViewModel: ObservableObject {
         case "duration_out_of_range": "給水時間が端末の上限外です"
         default: "端末が操作を拒否しました（\(code)）"
         }
+    }
+
+    private static func makePreviewStatus() -> AtomStatus? {
+        let data = Data(#"{"state":"IDLE","pump":false,"armed":true,"watering_mode":"NONE","moisture_adc":1688,"scheduled_ms":0,"remaining_ms":0,"uptime_ms":571900,"wifi_rssi":-54,"firmware_version":"0.4.1","last_request_id":null,"error_reason":null,"max_duration_sec":180}"#.utf8)
+        return try? JSONDecoder().decode(AtomStatus.self, from: data)
     }
 }

@@ -36,7 +36,7 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild             -project ios/TreeWatering.xcodeproj             -scheme TreeWatering             -configuration Debug             -sdk iphonesimulator             -destination 'generic/platform=iOS Simulator'             -derivedDataPath ios/build             CODE_SIGNING_ALLOWED=NO             build | tee ios/build.log
-      - name: Launch and capture setup screen
+      - name: Launch and capture app screens
         run: |
           set -euo pipefail
           simulator_id="$(xcrun simctl list devices available -j | python3 -c '
@@ -60,6 +60,9 @@ jobs:
           xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering
           sleep 2
           xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-setup.png
+          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview
+          sleep 2
+          xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-dashboard.png
           ditto -c -k --sequesterRsrc --keepParent "$app_path" ios/build/TreeWatering-simulator.zip
           xcrun simctl shutdown "$simulator_id"
       - name: Upload simulator app and screenshot
@@ -69,6 +72,7 @@ jobs:
           path: |
             ios/build/TreeWatering-simulator.zip
             ios/build/TreeWatering-setup.png
+            ios/build/TreeWatering-dashboard.png
             ios/build.log
           if-no-files-found: error
           retention-days: 14
