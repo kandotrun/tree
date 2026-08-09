@@ -32,7 +32,7 @@ struct SetupView: View {
                         .foregroundStyle(Color.treeInk)
                         .padding(.top, 30)
 
-                    Text("ベランダの端末へ、Wi-Fiから直接つなぎます。クラウドやアカウントは使いません。")
+                    Text("ベランダの端末へWi-Fiで接続します。\nクラウドやアカウントは使いません。")
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(Color.treeInk.opacity(0.68))
                         .lineSpacing(5)
@@ -94,7 +94,6 @@ struct SetupView: View {
                 .frame(maxWidth: .infinity)
             }
         }
-        .onAppear { endpointFocused = model.endpointInput.isEmpty }
     }
 
     private func connect() {

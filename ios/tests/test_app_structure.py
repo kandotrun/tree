@@ -24,6 +24,10 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn("scenePhase", source)
         self.assertIn("handleSceneInactive", source)
 
+    def test_setup_does_not_force_keyboard_on_first_launch(self) -> None:
+        setup = (IOS_ROOT / "TreeWatering/Features/SetupView.swift").read_text()
+        self.assertNotIn(".onAppear { endpointFocused", setup)
+
     def test_repository_does_not_embed_installed_device_address(self) -> None:
         committed_sources = [IOS_ROOT / "project.yml"] + sorted(
             (IOS_ROOT / "TreeWatering").rglob("*.swift")
