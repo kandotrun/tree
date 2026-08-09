@@ -84,7 +84,7 @@ struct SetupView: View {
 
                     Label("同じWi-Fiに接続した状態で設定してください", systemImage: "wifi")
                         .font(.footnote.weight(.medium))
-                        .foregroundStyle(Color.treeInk.opacity(0.56))
+                        .foregroundStyle(Color.treeInk.opacity(0.64))
                         .padding(.top, 20)
 
                     Spacer(minLength: 48)

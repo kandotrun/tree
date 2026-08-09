@@ -96,7 +96,7 @@ struct DashboardView: View {
             }
         }
         .font(.caption.monospaced().weight(.medium))
-        .foregroundStyle(Color.treeInk.opacity(0.45))
+        .foregroundStyle(Color.treeInk.opacity(0.64))
         .padding(.horizontal, 6)
         .padding(.top, 4)
     }
@@ -120,7 +120,7 @@ private struct StatusCard: View {
                         .foregroundStyle(Color.treeInk)
                     Text(statusDetail)
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Color.treeInk.opacity(0.60))
+                        .foregroundStyle(Color.treeInk.opacity(0.64))
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let remaining = model.status?.remainingMilliseconds,
@@ -218,7 +218,7 @@ private struct MetricTile: View {
                 .contentTransition(.numericText())
             Text(label)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(Color.treeInk.opacity(0.48))
+                .foregroundStyle(Color.treeInk.opacity(0.64))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
@@ -238,8 +238,8 @@ private struct DoseCard: View {
                         .font(.headline)
                         .foregroundStyle(Color.treeInk)
                     Text("指定時間で必ず自動停止")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.treeInk.opacity(0.52))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.treeInk.opacity(0.64))
                 }
                 Spacer()
                 Image(systemName: "timer")
@@ -323,14 +323,14 @@ private struct HoldCard: View {
                             : (acceptsTouch ? "離すとすぐ停止" : "状態確認後に操作できます")
                     )
                         .font(.caption.weight(.medium))
-                        .opacity(0.68)
+                        .opacity(acceptsTouch ? 0.68 : 1)
                 }
                 Spacer()
             }
             .foregroundStyle(
                 model.holdGestureActive
                     ? Color.treeCanvas
-                    : Color.treeInk.opacity(acceptsTouch ? 1 : 0.48)
+                    : Color.treeInk.opacity(acceptsTouch ? 1 : 0.64)
             )
             .padding(.horizontal, 18)
             .frame(height: 70)
