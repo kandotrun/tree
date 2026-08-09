@@ -311,13 +311,21 @@ private struct HoldCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("押している間だけ給水")
                         .font(.headline)
-                    Text(model.holdStartInFlight ? "開始を確認中…" : "離すとすぐ停止")
+                    Text(
+                        model.holdStartInFlight
+                            ? "開始を確認中…"
+                            : (acceptsTouch ? "離すとすぐ停止" : "状態確認後に操作できます")
+                    )
                         .font(.caption.weight(.medium))
                         .opacity(0.68)
                 }
                 Spacer()
             }
-            .foregroundStyle(model.holdGestureActive ? Color.treeCanvas : Color.treeInk)
+            .foregroundStyle(
+                model.holdGestureActive
+                    ? Color.treeCanvas
+                    : Color.treeInk.opacity(acceptsTouch ? 1 : 0.48)
+            )
             .padding(.horizontal, 18)
             .frame(height: 70)
             .background(
@@ -340,8 +348,8 @@ private struct HoldCard: View {
             .sensoryFeedback(.impact(weight: .medium), trigger: model.holdGestureActive)
 
             Label("通信が途切れた場合も、端末側の安全機構が1.5秒以内に停止します", systemImage: "shield.checkered")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(Color.treeInk.opacity(0.52))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.treeInk.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .treeCard()
@@ -426,7 +434,7 @@ private struct ConnectionPill: View {
 
     private var title: String {
         switch state {
-        case .online: "接続中"
+        case .online: "接続済み"
         case .connecting: "確認中"
         case .offline: "オフライン"
         case .unconfigured: "未設定"

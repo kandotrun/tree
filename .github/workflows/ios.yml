@@ -63,6 +63,9 @@ jobs:
           xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview
           sleep 2
           xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-dashboard.png
+          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview-watering
+          sleep 2
+          xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-watering.png
           ditto -c -k --sequesterRsrc --keepParent "$app_path" ios/build/TreeWatering-simulator.zip
           xcrun simctl shutdown "$simulator_id"
       - name: Upload simulator app and screenshot
@@ -73,6 +76,7 @@ jobs:
             ios/build/TreeWatering-simulator.zip
             ios/build/TreeWatering-setup.png
             ios/build/TreeWatering-dashboard.png
+            ios/build/TreeWatering-watering.png
             ios/build.log
           if-no-files-found: error
           retention-days: 14

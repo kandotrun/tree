@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import re
 import unittest
 
 IOS_ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +31,27 @@ class IOSAppStructureTests(unittest.TestCase):
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text()
         self.assertIn("TreeWatering-setup.png", workflow)
         self.assertIn("TreeWatering-dashboard.png", workflow)
+        self.assertIn("TreeWatering-watering.png", workflow)
         self.assertIn('"-ui-preview"', view_model)
+        self.assertIn('"-ui-preview-watering"', view_model)
+
+    def test_dashboard_preview_fixture_is_valid_json(self) -> None:
+        view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text()
+        matches = re.findall(r'Data\(#"(.+?)"#\.utf8\)', view_model)
+        self.assertEqual(len(matches), 2)
+        payloads = [json.loads(value) for value in matches]
+        required = {
+            "state", "pump", "armed", "watering_mode", "moisture_adc",
+            "default_duration_sec", "max_duration_sec", "scheduled_ms", "remaining_ms",
+            "hold_lease_ms", "hold_max_run_ms", "hold_lease_remaining_ms",
+            "uptime_ms", "wifi_rssi", "firmware_version", "last_request_id",
+            "last_runtime_ms", "last_stop_reason", "error_reason",
+        }
+        for payload in payloads:
+            self.assertEqual(required - payload.keys(), set())
+            self.assertTrue(payload["armed"])
+        self.assertEqual([payload["state"] for payload in payloads], ["IDLE", "WATERING"])
+        self.assertEqual([payload["pump"] for payload in payloads], [False, True])
 
     def test_setup_does_not_force_keyboard_on_first_launch(self) -> None:
         setup = (IOS_ROOT / "TreeWatering/Features/SetupView.swift").read_text()

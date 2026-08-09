@@ -52,8 +52,11 @@ final class DashboardViewModel: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 #if DEBUG
-        let previewMode = ProcessInfo.processInfo.arguments.contains("-ui-preview")
+        let wateringPreview = ProcessInfo.processInfo.arguments.contains("-ui-preview-watering")
+        let previewMode = wateringPreview
+            || ProcessInfo.processInfo.arguments.contains("-ui-preview")
 #else
+        let wateringPreview = false
         let previewMode = false
 #endif
         isPreviewMode = previewMode
@@ -61,7 +64,10 @@ final class DashboardViewModel: ObservableObject {
            let endpoint = try? DeviceEndpoint("http://127.0.0.1") {
             endpointInput = endpoint.baseURL.absoluteString
             install(endpoint: endpoint)
-            status = Self.makePreviewStatus()
+            status = wateringPreview
+                ? Self.makeWateringPreviewStatus()
+                : Self.makePreviewStatus()
+            stopRecommended = wateringPreview
             connectionState = .online
             return
         }
@@ -348,7 +354,12 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private static func makePreviewStatus() -> AtomStatus? {
-        let data = Data(#"{"state":"IDLE","pump":false,"armed":true,"watering_mode":"NONE","moisture_adc":1688,"scheduled_ms":0,"remaining_ms":0,"uptime_ms":571900,"wifi_rssi":-54,"firmware_version":"0.4.1","last_request_id":null,"error_reason":null,"max_duration_sec":180}"#.utf8)
+        let data = Data(#"{"state":"IDLE","pump":false,"armed":true,"watering_mode":"NONE","moisture_adc":1688,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":0,"remaining_ms":0,"hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"uptime_ms":571900,"wifi_rssi":-54,"firmware_version":"0.4.1","last_request_id":"preview","last_runtime_ms":0,"last_stop_reason":"NONE","error_reason":null}"#.utf8)
+        return try? JSONDecoder().decode(AtomStatus.self, from: data)
+    }
+
+    private static func makeWateringPreviewStatus() -> AtomStatus? {
+        let data = Data(#"{"state":"WATERING","pump":true,"armed":true,"watering_mode":"TIMED","moisture_adc":1688,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":10000,"remaining_ms":6500,"hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"uptime_ms":575400,"wifi_rssi":-54,"firmware_version":"0.4.1","last_request_id":"preview-water","last_runtime_ms":0,"last_stop_reason":"NONE","error_reason":null}"#.utf8)
         return try? JSONDecoder().decode(AtomStatus.self, from: data)
     }
 }
