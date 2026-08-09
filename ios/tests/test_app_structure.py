@@ -58,6 +58,9 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn(".safeAreaInset(edge: .bottom", dashboard)
         scroll_start = dashboard.index("LazyVStack")
         scroll_end = dashboard.index(".refreshable")
+        inset_index = dashboard.index(".safeAreaInset(edge: .bottom")
+        toolbar_index = dashboard.index(".toolbar(.hidden")
+        self.assertLess(inset_index, toolbar_index)
         self.assertNotIn("StopCard(model: model)", dashboard[scroll_start:scroll_end])
 
     def test_setup_does_not_force_keyboard_on_first_launch(self) -> None:
