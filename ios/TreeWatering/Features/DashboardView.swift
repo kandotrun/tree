@@ -20,11 +20,6 @@ struct DashboardView: View {
                                 .transition(.move(edge: .top).combined(with: .opacity))
                         }
 
-                        if model.shouldShowStop {
-                            StopCard(model: model)
-                                .transition(.scale.combined(with: .opacity))
-                        }
-
                         DoseCard(model: model)
                         HoldCard(model: model)
                         deviceFooter
@@ -38,6 +33,17 @@ struct DashboardView: View {
                 .refreshable { model.refreshNow() }
             }
             .toolbar(.hidden, for: .navigationBar)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.shouldShowStop {
+                StopCard(model: model)
+                    .frame(maxWidth: 620)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.treeCanvas.opacity(0.94))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .alert("給水を開始しますか", isPresented: $model.showDoseConfirmation) {
             Button("キャンセル", role: .cancel) {}

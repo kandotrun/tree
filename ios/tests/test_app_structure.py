@@ -53,6 +53,13 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertEqual([payload["state"] for payload in payloads], ["IDLE", "WATERING"])
         self.assertEqual([payload["pump"] for payload in payloads], [False, True])
 
+    def test_emergency_stop_is_fixed_outside_scroll_content(self) -> None:
+        dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text()
+        self.assertIn(".safeAreaInset(edge: .bottom", dashboard)
+        scroll_start = dashboard.index("LazyVStack")
+        scroll_end = dashboard.index(".refreshable")
+        self.assertNotIn("StopCard(model: model)", dashboard[scroll_start:scroll_end])
+
     def test_setup_does_not_force_keyboard_on_first_launch(self) -> None:
         setup = (IOS_ROOT / "TreeWatering/Features/SetupView.swift").read_text()
         self.assertNotIn(".onAppear { endpointFocused", setup)
