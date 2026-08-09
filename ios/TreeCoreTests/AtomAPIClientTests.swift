@@ -13,12 +13,14 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
 
     static var handler: ((URLRequest) throws -> StubResult)?
     static var requests: [URLRequest] = []
+    static var requestBodies: [Data?] = []
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         Self.requests.append(request)
+        Self.requestBodies.append(Self.bodyData(from: request))
         do {
             guard let handler = Self.handler else {
                 throw URLError(.badServerResponse)
@@ -43,6 +45,25 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+
+    private static func bodyData(from request: URLRequest) -> Data? {
+        if let body = request.httpBody {
+            return body
+        }
+        guard let stream = request.httpBodyStream else {
+            return nil
+        }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4_096)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
 }
 
 final class AtomAPIClientTests: XCTestCase {
@@ -59,6 +80,7 @@ final class AtomAPIClientTests: XCTestCase {
             requestTimeout: 5
         )
         URLProtocolStub.requests = []
+        URLProtocolStub.requestBodies = []
         URLProtocolStub.handler = nil
     }
 
@@ -68,6 +90,7 @@ final class AtomAPIClientTests: XCTestCase {
         client = nil
         URLProtocolStub.handler = nil
         URLProtocolStub.requests = []
+        URLProtocolStub.requestBodies = []
     }
 
     func testFetchStatusUsesNoStoreGET() async throws {
@@ -109,7 +132,7 @@ final class AtomAPIClientTests: XCTestCase {
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.url?.path, "/v1/water")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-        let body = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(URLProtocolStub.requestBodies.first ?? nil)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertEqual(json["request_id"] as? String, "ios-request-1")
         XCTAssertEqual(json["duration_sec"] as? Int, 10)
@@ -153,7 +176,7 @@ final class AtomAPIClientTests: XCTestCase {
         XCTAssertTrue(acknowledgement.stopped)
         let request = try XCTUnwrap(URLProtocolStub.requests.first)
         XCTAssertEqual(request.url?.path, "/v1/stop")
-        let body = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(URLProtocolStub.requestBodies.first ?? nil)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertTrue(json.isEmpty)
     }
