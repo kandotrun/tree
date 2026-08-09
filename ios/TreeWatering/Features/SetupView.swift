@@ -48,7 +48,7 @@ struct SetupView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.URL)
-                            .submitLabel(.connect)
+                            .submitLabel(.go)
                             .focused($endpointFocused)
                             .padding(16)
                             .background(Color.white.opacity(0.84))
