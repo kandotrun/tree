@@ -26,6 +26,14 @@ bridge/*.egg-info/
 .pio/
 firmware/.pio/
 
+# iOS / Xcode
+ios/.build/
+ios/build/
+ios/TreeWatering.xcodeproj/
+ios/TreeWatering/Info.plist
+*.xcuserstate
+xcuserdata/
+
 # Editors and OS
 .DS_Store
 .idea/

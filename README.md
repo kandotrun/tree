@@ -1,6 +1,7 @@
 # Balcony Watering
 
 [![CI](https://github.com/kandotrun/tree/actions/workflows/ci.yml/badge.svg)](https://github.com/kandotrun/tree/actions/workflows/ci.yml)
+[![iOS](https://github.com/kandotrun/tree/actions/workflows/ios.yml/badge.svg)](https://github.com/kandotrun/tree/actions/workflows/ios.yml)
 
 A fail-safe watering controller for one balcony tree, built with an M5Stack
 ATOM Lite, Unit Watering U101, and a NAS bridge. The device stays LAN-only;
@@ -17,6 +18,7 @@ an anonymous, tightly bounded public gateway can be exposed separately.
 ```mermaid
 flowchart LR
     W[LAN browser] -->|bounded dose or leased hold| A[ATOM Lite]
+    I[iOS app] -->|bounded dose or leased hold| A
     P[Public browser] -->|HTTPS| C[Cloudflare Tunnel]
     C -->|loopback HTTP| B[NAS bridge]
     H[Hermes Agent] -->|fixed command| B
@@ -72,6 +74,7 @@ siphon, power, weatherproofing, and physical inspection.
 ```text
 firmware/  ESP32 firmware and host-side state-machine tests
 bridge/    NAS CLI/public gateway, SQLite state, assets, and tests
+ios/       Native SwiftUI LAN client, safety core, and tests
 docs/      Japanese design and staged commissioning guide
 scripts/   Flash and serial-monitor helpers
 ```
@@ -110,6 +113,22 @@ flash asset:
 python3 firmware/scripts/generate_dashboard_header.py
 python3 firmware/scripts/generate_dashboard_header.py --check
 ```
+
+### iOS app
+
+The native SwiftUI app connects directly to the ATOM on the same Wi-Fi. It
+provides live status, bounded confirmed doses, leased press-and-hold watering,
+and emergency stop without a cloud service or login. The installed device
+address is entered and stored on the iPhone; it is not committed to this repo.
+
+```bash
+brew install xcodegen
+xcodegen generate --spec ios/project.yml
+open ios/TreeWatering.xcodeproj
+```
+
+See [`ios/README.md`](ios/README.md) for local-network permissions, physical
+device signing, safety behavior, and test commands.
 
 ### Bridge
 
