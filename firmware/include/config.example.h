@@ -5,7 +5,7 @@
 #define WIFI_PASSWORD "CHANGE_ME"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.4.1"
+#define FIRMWARE_VERSION "0.5.0"
 
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32

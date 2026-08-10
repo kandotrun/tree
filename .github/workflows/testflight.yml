@@ -1,0 +1,289 @@
+name: Reusable Tree TestFlight Upload
+
+on:
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: JSON array of trusted self-hosted runner labels
+        required: true
+        type: string
+      source_keychain_path:
+        description: Absolute path to the Apple Distribution keychain
+        required: true
+        type: string
+      source_ref:
+        description: Full Tree commit SHA to archive
+        required: true
+        type: string
+      build_number:
+        description: Optional numeric CFBundleVersion override
+        required: false
+        default: ""
+        type: string
+    secrets:
+      CI_KEYCHAIN_PASSWORD:
+        required: true
+      ASC_ISSUER_ID:
+        required: true
+      ASC_KEY_ID:
+        required: true
+      ASC_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tree-testflight-upload
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Archive, sign, and upload
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 45
+    env:
+      SOURCE_KEYCHAIN_PATH: ${{ inputs.source_keychain_path }}
+      TEAM_ID: UGNVGWZMAU
+    steps:
+      - name: Validate source commit
+        shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REF" =~ ^[0-9a-fA-F]{40}$ ]]
+
+      - name: Check out Tree
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: kandotrun/tree
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify distribution contract
+        run: python3 -m unittest ios.tests.test_testflight_config -v
+
+      - name: Select Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d /Applications/Xcode_26.6.app ]]; then
+            XCODE_DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer
+          elif [[ -d /Applications/Xcode.app ]]; then
+            XCODE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+          else
+            echo "Xcode 26 is not installed" >&2
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$XCODE_DEVELOPER_DIR" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_DEVELOPER_DIR"
+          XCODE_VERSION_OUTPUT=$(xcodebuild -version)
+          printf '%s\n' "$XCODE_VERSION_OUTPUT"
+          XCODE_VERSION_LINE="${XCODE_VERSION_OUTPUT%%$'\n'*}"
+          [[ "$XCODE_VERSION_LINE" =~ ^Xcode[[:space:]]26([.]|$) ]]
+
+      - name: Verify XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v xcodegen
+          xcodegen --version
+
+      - name: Prepare App Store Connect key and signing keychain
+        shell: bash
+        env:
+          ASC_ISSUER_ID_VALUE: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID_VALUE: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY_VALUE: ${{ secrets.ASC_PRIVATE_KEY }}
+          CI_KEYCHAIN_PASSWORD_VALUE: ${{ secrets.CI_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in \
+            "$ASC_ISSUER_ID_VALUE" \
+            "$ASC_KEY_ID_VALUE" \
+            "$ASC_PRIVATE_KEY_VALUE" \
+            "$CI_KEYCHAIN_PASSWORD_VALUE"; do
+            [[ -n "$value" ]]
+          done
+          [[ "$ASC_KEY_ID_VALUE" =~ ^[A-Z0-9]{10}$ ]]
+          [[ "$ASC_ISSUER_ID_VALUE" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+          case "$ASC_PRIVATE_KEY_VALUE" in
+            *"BEGIN PRIVATE KEY"*|*"BEGIN EC PRIVATE KEY"*) ;;
+            *) exit 1 ;;
+          esac
+          [[ -f "$SOURCE_KEYCHAIN_PATH" ]]
+
+          ORIGINAL_DEFAULT_RAW=$(security default-keychain -d user)
+          ORIGINAL_DEFAULT_KEYCHAIN="${ORIGINAL_DEFAULT_RAW#*\"}"
+          ORIGINAL_DEFAULT_KEYCHAIN="${ORIGINAL_DEFAULT_KEYCHAIN%\"*}"
+          ORIGINAL_KEYCHAIN_LIST_PATH=$(mktemp "$RUNNER_TEMP/tree-original-keychains.XXXXXX")
+          security list-keychains -d user > "$ORIGINAL_KEYCHAIN_LIST_PATH"
+          {
+            echo "ORIGINAL_DEFAULT_KEYCHAIN=$ORIGINAL_DEFAULT_KEYCHAIN"
+            echo "ORIGINAL_KEYCHAIN_LIST_PATH=$ORIGINAL_KEYCHAIN_LIST_PATH"
+          } >> "$GITHUB_ENV"
+
+          API_KEY_DIR=$(mktemp -d "$RUNNER_TEMP/tree-asc.XXXXXX")
+          API_KEY_PATH="$API_KEY_DIR/AuthKey_${ASC_KEY_ID_VALUE}.p8"
+          {
+            echo "API_KEY_DIR=$API_KEY_DIR"
+            echo "API_KEY_PATH=$API_KEY_PATH"
+            echo "ASC_ISSUER_ID=$ASC_ISSUER_ID_VALUE"
+            echo "ASC_KEY_ID=$ASC_KEY_ID_VALUE"
+            echo "ARCHIVE_PATH=$RUNNER_TEMP/TreeWatering.xcarchive"
+            echo "EXPORT_PATH=$RUNNER_TEMP/TreeWateringExport"
+          } >> "$GITHUB_ENV"
+          printf '%s' "$ASC_PRIVATE_KEY_VALUE" > "$API_KEY_PATH"
+          chmod 600 "$API_KEY_PATH"
+
+          CI_KEYCHAIN_DIR=$(mktemp -d "$RUNNER_TEMP/tree-signing.XXXXXX")
+          CI_KEYCHAIN_PATH="$CI_KEYCHAIN_DIR/tree-ci.keychain-db"
+          {
+            echo "CI_KEYCHAIN_DIR=$CI_KEYCHAIN_DIR"
+            echo "CI_KEYCHAIN_PATH=$CI_KEYCHAIN_PATH"
+          } >> "$GITHUB_ENV"
+          cp -p "$SOURCE_KEYCHAIN_PATH" "$CI_KEYCHAIN_PATH"
+          security unlock-keychain -p "$CI_KEYCHAIN_PASSWORD_VALUE" "$CI_KEYCHAIN_PATH"
+          security set-keychain-settings -lut 3600 "$CI_KEYCHAIN_PATH"
+          security default-keychain -d user -s "$CI_KEYCHAIN_PATH"
+          security list-keychains -d user -s "$CI_KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$CI_KEYCHAIN_PATH"
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec ios/project.yml
+
+      - name: Resolve build number
+        id: build
+        shell: bash
+        env:
+          REQUESTED_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          BUILD_NUMBER="$REQUESTED_BUILD_NUMBER"
+          if [[ -z "$BUILD_NUMBER" ]]; then
+            BUILD_NUMBER="${{ github.run_number }}"
+          fi
+          [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]{0,17}$ ]]
+          echo "number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Archive signed Release build
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project ios/TreeWatering.xcodeproj \
+            -scheme TreeWatering \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$API_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            OTHER_CODE_SIGN_FLAGS="--keychain $CI_KEYCHAIN_PATH" \
+            CURRENT_PROJECT_VERSION="${{ steps.build.outputs.number }}" \
+            | tee "$RUNNER_TEMP/tree-archive.log"
+
+      - name: Verify signed archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH="$ARCHIVE_PATH/Products/Applications/TreeWatering.app"
+          [[ -d "$APP_PATH" ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")" == "run.kan.treewatering" ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" == "1.0.0" ]]
+          [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" == "${{ steps.build.outputs.number }}" ]]
+          [[ -f "$APP_PATH/Assets.car" ]]
+          [[ -f "$APP_PATH/PrivacyInfo.xcprivacy" ]]
+          codesign --verify --deep --strict "$APP_PATH"
+
+      - name: Upload archive to App Store Connect
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$API_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            | tee "$RUNNER_TEMP/tree-export.log"
+
+      - name: Write deployment summary
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo '### Tree TestFlight upload'
+            echo
+            echo "- Source: \`$(git rev-parse HEAD)\`"
+            echo "- Version: \`1.0.0 (${{ steps.build.outputs.number }})\`"
+            echo '- Signed archive validation: PASS'
+            echo '- App Store Connect upload: PASS'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload private deployment evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: tree-testflight-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/tree-archive.log
+            ${{ runner.temp }}/tree-export.log
+            ${{ runner.temp }}/TreeWatering.xcarchive/Info.plist
+            ${{ runner.temp }}/TreeWateringExport/**/*.xcdistributionlogs
+
+      - name: Restore keychain and remove temporary credentials
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          cleanup_status=0
+          ORIGINAL_KEYCHAINS=()
+          if [[ -n "${ORIGINAL_KEYCHAIN_LIST_PATH:-}" && -f "$ORIGINAL_KEYCHAIN_LIST_PATH" ]]; then
+            while IFS= read -r line; do
+              keychain="${line#*\"}"
+              keychain="${keychain%\"*}"
+              [[ -n "$keychain" ]] && ORIGINAL_KEYCHAINS+=("$keychain")
+            done < "$ORIGINAL_KEYCHAIN_LIST_PATH"
+          fi
+          if [[ -n "${ORIGINAL_DEFAULT_KEYCHAIN:-}" ]]; then
+            security default-keychain -d user -s "$ORIGINAL_DEFAULT_KEYCHAIN" || cleanup_status=1
+          fi
+          if (( ${#ORIGINAL_KEYCHAINS[@]} > 0 )); then
+            security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}" || cleanup_status=1
+          fi
+          case "${CI_KEYCHAIN_DIR:-}" in
+            "$RUNNER_TEMP"/tree-signing.*)
+              if [[ -n "${CI_KEYCHAIN_PATH:-}" && -f "$CI_KEYCHAIN_PATH" ]]; then
+                security lock-keychain "$CI_KEYCHAIN_PATH" 2>/dev/null || true
+                security delete-keychain "$CI_KEYCHAIN_PATH" 2>/dev/null || cleanup_status=1
+              fi
+              find "$CI_KEYCHAIN_DIR" -type f -delete || cleanup_status=1
+              rmdir "$CI_KEYCHAIN_DIR" || cleanup_status=1
+              ;;
+            "") ;;
+            *) cleanup_status=1 ;;
+          esac
+          case "${API_KEY_DIR:-}" in
+            "$RUNNER_TEMP"/tree-asc.*)
+              find "$API_KEY_DIR" -type f -delete || cleanup_status=1
+              rmdir "$API_KEY_DIR" || cleanup_status=1
+              ;;
+            "") ;;
+            *) cleanup_status=1 ;;
+          esac
+          case "${ORIGINAL_KEYCHAIN_LIST_PATH:-}" in
+            "$RUNNER_TEMP"/tree-original-keychains.*) rm -f "$ORIGINAL_KEYCHAIN_LIST_PATH" || cleanup_status=1 ;;
+            "") ;;
+            *) cleanup_status=1 ;;
+          esac
+          exit "$cleanup_status"

@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Adafruit_NeoPixel.h>
+#include <ESPmDNS.h>
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
@@ -32,10 +33,12 @@ using watering::State;
 using watering::WateringController;
 
 constexpr uint16_t kHttpPort = 80U;
+constexpr char kDiscoveryServiceType[] = "tree-watering";
 constexpr std::size_t kMaximumRequestBodyBytes = 256U;
 constexpr std::size_t kMoistureSampleCount = 9U;
 static_assert(kMoistureSampleCount <= watering::kMaximumMedianSamples);
 constexpr uint32_t kSuccessLedMs = 1000U;
+constexpr uint32_t kMDNSRetryIntervalMs = 5000U;
 constexpr uint8_t kLedBrightness = 24U;
 constexpr char kPreferencesNamespace[] = "watering";
 constexpr char kLastRequestKey[] = "last_request";
@@ -56,6 +59,9 @@ wl_status_t previous_wifi_status = WL_NO_SHIELD;
 bool preferences_ready = false;
 bool network_config_valid = false;
 bool watchdog_ready = false;
+bool mdns_ready = false;
+bool mdns_start_attempted = false;
+uint32_t last_mdns_attempt_at = 0U;
 esp_timer_handle_t pump_safety_timer = nullptr;
 std::atomic<bool> pump_safety_timer_active{false};
 PumpSafetyGate pump_safety_gate;
@@ -255,6 +261,9 @@ void handle_dashboard() {
 void handle_status() {
   const uint32_t now = millis();
   JsonDocument response;
+  response["device_type"] = "tree-watering";
+  response["api_version"] = 1;
+  response["device_name"] = DEVICE_NAME;
   response["state"] = watering::state_name(controller->state());
   response["pump"] = pump_output_should_run();
   response["uptime_ms"] = now;
@@ -485,6 +494,43 @@ void sample_moisture(uint32_t now) {
       watering::median_u16(moisture_samples.data(), moisture_sample_size);
 }
 
+void stop_discovery_service() {
+  if (!mdns_ready) {
+    mdns_start_attempted = false;
+    return;
+  }
+  MDNS.end();
+  mdns_ready = false;
+  mdns_start_attempted = false;
+  Serial.println("mDNS discovery stopped");
+}
+
+void start_discovery_service() {
+  if (mdns_ready || WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+  const uint32_t now = millis();
+  if (mdns_start_attempted &&
+      now - last_mdns_attempt_at < kMDNSRetryIntervalMs) {
+    return;
+  }
+  mdns_start_attempted = true;
+  last_mdns_attempt_at = now;
+  if (!MDNS.begin(DEVICE_NAME)) {
+    Serial.println("mDNS discovery failed to start");
+    return;
+  }
+  MDNS.setInstanceName(DEVICE_NAME);
+  MDNS.addService("tree-watering", "tcp", kHttpPort);
+  MDNS.addServiceTxt(kDiscoveryServiceType, "tcp", "device_type",
+                     "tree-watering");
+  MDNS.addServiceTxt(kDiscoveryServiceType, "tcp", "api_version", "1");
+  MDNS.addServiceTxt(kDiscoveryServiceType, "tcp", "device_name", DEVICE_NAME);
+  mdns_ready = true;
+  Serial.printf("mDNS discovery ready host=%s.local service=_%s._tcp\n",
+                DEVICE_NAME, kDiscoveryServiceType);
+}
+
 void maintain_wifi(uint32_t now) {
   if (!network_config_valid) {
     return;
@@ -495,10 +541,15 @@ void maintain_wifi(uint32_t now) {
       Serial.printf("Wi-Fi connected ip=%s rssi=%d\n",
                     WiFi.localIP().toString().c_str(), WiFi.RSSI());
       success_led_until = now + kSuccessLedMs;
+      start_discovery_service();
     } else {
+      stop_discovery_service();
       Serial.printf("Wi-Fi state=%d\n", static_cast<int>(current));
     }
     previous_wifi_status = current;
+  }
+  if (current == WL_CONNECTED && !mdns_ready) {
+    start_discovery_service();
   }
   if (current != WL_CONNECTED &&
       now - last_wifi_attempt_at >= WIFI_RECONNECT_INTERVAL_MS) {
@@ -512,6 +563,7 @@ void maintain_wifi(uint32_t now) {
 void connect_wifi_initially() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname(DEVICE_NAME);
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   last_wifi_attempt_at = millis();
@@ -576,6 +628,7 @@ void setup() {
     Serial.println("Wi-Fi disabled because configuration is invalid");
   }
   configure_http_server();
+  start_discovery_service();
   sample_moisture(millis());
 
   const esp_err_t watchdog_init =

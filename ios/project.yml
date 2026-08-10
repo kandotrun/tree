@@ -1,0 +1,82 @@
+name: TreeWatering
+options:
+  bundleIdPrefix: run.kan
+  deploymentTarget:
+    iOS: "26.0"
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+packages:
+  TreeCore:
+    path: .
+
+targets:
+  TreeWatering:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: TreeWatering
+        excludes:
+          - Resources
+      - path: TreeWatering/Resources/Assets.xcassets
+        buildPhase: resources
+      - path: TreeWatering/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: TreeCore
+    info:
+      path: TreeWatering/Info.plist
+      properties:
+        CFBundleDisplayName: 木のみず
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.utilities
+        NSLocalNetworkUsageDescription: 同じWi-Fiのベランダ端末を自動検出し、状態確認と給水操作をLAN内で行います。
+        NSBonjourServices:
+          - "_tree-watering._tcp"
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            "10.0.0.0/8":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "127.0.0.0/8":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "169.254.0.0/16":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "172.16.0.0/12":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "192.168.0.0/16":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "fc00::/7":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "fe80::/10":
+              NSExceptionAllowsInsecureHTTPLoads: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: run.kan.treewatering
+        PRODUCT_NAME: TreeWatering
+        SWIFT_VERSION: "5.10"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: "1"
+        DEVELOPMENT_TEAM: UGNVGWZMAU
+        MARKETING_VERSION: "1.0.0"
+        SUPPORTS_MACCATALYST: false
+        TARGETED_DEVICE_FAMILY: "1"
+
+schemes:
+  TreeWatering:
+    build:
+      targets:
+        TreeWatering: all
+    run:
+      config: Debug
+    archive:
+      config: Release
