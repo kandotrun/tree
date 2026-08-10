@@ -175,7 +175,7 @@ lib_deps =
 #define WIFI_PASSWORD "CHANGE_ME"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.4.1"
+#define FIRMWARE_VERSION "0.5.0"
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
 #define LED_PIN 27
@@ -216,6 +216,7 @@ bridge/*.db
 ファームウェアは次の処理だけを担当する。
 
 - Wi-Fi接続と再接続
+- `balcony-watering.local`と`_tree-watering._tcp`のmDNS/Bonjour広告
 - HTTP API
 - ポンプ状態機械
 - ローカル停止タイマー
@@ -302,6 +303,9 @@ WANへ公開する場合もATOMへ直接向けず、固定短時間とquotaを�
 
 ```json
 {
+  "device_type": "tree-watering",
+  "api_version": 1,
+  "device_name": "balcony-watering",
   "state": "IDLE",
   "pump": false,
   "uptime_ms": 123456,
@@ -319,9 +323,14 @@ WANへ公開する場合もATOMへ直接向けず、固定短時間とquotaを�
   "remaining_ms": 0,
   "last_runtime_ms": 10000,
   "last_stop_reason": "DOSE_COMPLETE",
-  "firmware_version": "0.4.1"
+  "firmware_version": "0.5.0"
 }
 ```
+
+iOSの自動検出は`_tree-watering._tcp`の固定instance `balcony-watering`だけを候補とし、
+Bonjour候補を保存する前にこのread-only endpointだけを読み、
+`device_type`、`api_version`、`device_name`と固定安全上限を照合する。
+候補検証中に給水・hold・停止endpointは呼ばない。旧firmwareは手動接続だけを許可する。
 
 ### 10.4 `POST /v1/water`
 
@@ -972,6 +981,14 @@ ATOMを信頼済みLANへ限定し、外部HTTPSはCloudflare TunnelからNAS ga
 - [ ] 全APIが`Authorization`ヘッダーなしで応答する
 - [ ] 管理画面が認証入力なしで開く
 - [ ] Bridge設定にAPIトークンがなく、HTTP要求にも認証ヘッダーがない
+
+### Firmware v0.5.0
+
+- [ ] `dns-sd -B _tree-watering._tcp local.`で`balcony-watering`が見つかる
+- [ ] `balcony-watering.local`の`GET /v1/status`がidentity 3項目を返す
+- [ ] iOS初回起動でread-only検証後に自動接続する
+- [ ] 自動接続中・失敗時に`POST /v1/water`、hold、stopが送信されない
+- [ ] 実機flash後も起動直後のGPIO26がLOWで、`BOOT_GUARD`中にポンプが動かない
 - [ ] LAN外宛先拒否と全給水安全制約が維持される
 
 ### Bridge v0.1.0

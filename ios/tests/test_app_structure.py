@@ -25,6 +25,74 @@ class IOSAppStructureTests(unittest.TestCase):
             self.assertIn(network, project)
         self.assertNotIn("NSAllowsArbitraryLoads: true", project)
 
+    def test_bonjour_contract_matches_firmware_and_info_plist(self) -> None:
+        project = (IOS_ROOT / "project.yml").read_text(encoding="utf-8")
+        firmware = (IOS_ROOT.parent / "firmware/src/main.cpp").read_text(
+            encoding="utf-8"
+        )
+        firmware_config = (
+            IOS_ROOT.parent / "firmware/include/config.example.h"
+        ).read_text(encoding="utf-8")
+        workflow = (IOS_ROOT.parent / ".github/workflows/ios.yml").read_text(
+            encoding="utf-8"
+        )
+        discovery_path = IOS_ROOT / "TreeWatering/Networking/BonjourDeviceDiscovery.swift"
+        self.assertTrue(discovery_path.exists())
+        discovery = discovery_path.read_text(encoding="utf-8")
+
+        self.assertIn("NSBonjourServices", project)
+        self.assertIn('"_tree-watering._tcp"', project)
+        self.assertIn("#include <ESPmDNS.h>", firmware)
+        self.assertIn("MDNS.begin(DEVICE_NAME)", firmware)
+        self.assertIn("MDNS.setInstanceName(DEVICE_NAME)", firmware)
+        self.assertIn('MDNS.addService("tree-watering", "tcp", kHttpPort)', firmware)
+        for marker in [
+            'response["device_type"] = "tree-watering"',
+            'response["api_version"] = 1',
+            'response["device_name"] = DEVICE_NAME',
+        ]:
+            self.assertIn(marker, firmware)
+        self.assertIn('#define DEVICE_NAME "balcony-watering"', firmware_config)
+        self.assertEqual(workflow.count('      - "firmware/src/main.cpp"'), 2)
+        self.assertEqual(
+            workflow.count('      - "firmware/include/config.example.h"'),
+            2,
+        )
+        self.assertIn("NWBrowser", discovery)
+        self.assertIn("BonjourDeviceCandidate.serviceType", discovery)
+
+    def test_setup_scans_automatically_with_manual_fallback(self) -> None:
+        setup = (IOS_ROOT / "TreeWatering/Features/SetupView.swift").read_text(
+            encoding="utf-8"
+        )
+        view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("端末を探しています", setup)
+        self.assertIn("もう一度探す", setup)
+        self.assertIn("手動で設定", setup)
+        self.assertIn("func startDiscovery()", view_model)
+        self.assertIn("guard api == nil", view_model)
+        self.assertIn("startDiscovery()", view_model[view_model.index("func activate()") :])
+
+    def test_discovery_validates_read_only_status_before_saving(self) -> None:
+        view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("private func validateDiscoveredCandidate", view_model)
+        discovery_flow = view_model[
+            view_model.index("private func validateDiscoveredCandidate") : view_model.index(
+                "private func applyEndpoint"
+            )
+        ]
+
+        self.assertIn("client.fetchStatus()", discovery_flow)
+        self.assertIn("isCompatibleDiscoveryTarget", discovery_flow)
+        self.assertIn("applyEndpoint(candidate.endpoint)", discovery_flow)
+        for actuator in ["startWatering", "startHold", "renewHold", ".stop("]:
+            self.assertNotIn(actuator, discovery_flow)
+
     def test_app_contains_required_safe_control_surfaces(self) -> None:
         source = "\n".join(
             path.read_text(encoding="utf-8")
@@ -49,6 +117,109 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn("TreeWatering-watering.png", workflow)
         self.assertIn('"-ui-preview"', view_model)
         self.assertIn('"-ui-preview-watering"', view_model)
+
+    def test_app_targets_ios_26_and_ci_uses_macos_26(self) -> None:
+        project = (IOS_ROOT / "project.yml").read_text(encoding="utf-8")
+        workflow = (IOS_ROOT.parent / ".github/workflows/ios.yml").read_text(
+            encoding="utf-8"
+        )
+        readme = (IOS_ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn('deploymentTarget: "26.0"', project)
+        self.assertIn("runs-on: macos-26", workflow)
+        self.assertNotIn("UIRequiresFullScreen", project)
+        self.assertIn("Xcode 26", readme)
+        self.assertIn("iOS 26 or later", readme)
+
+    def test_primary_surfaces_use_native_liquid_glass_apis(self) -> None:
+        sources = "\n".join(
+            (IOS_ROOT / relative_path).read_text(encoding="utf-8")
+            for relative_path in [
+                "TreeWatering/Design/Theme.swift",
+                "TreeWatering/Features/SetupView.swift",
+                "TreeWatering/Features/DashboardView.swift",
+            ]
+        )
+
+        self.assertIn("GlassEffectContainer", sources)
+        self.assertGreaterEqual(sources.count(".glassEffect("), 4)
+        self.assertIn(".buttonStyle(.glass)", sources)
+        self.assertIn(".buttonStyle(.glassProminent)", sources)
+
+    def test_content_cards_avoid_glass_on_glass(self) -> None:
+        theme = (IOS_ROOT / "TreeWatering/Design/Theme.swift").read_text(
+            encoding="utf-8"
+        )
+        card = theme[
+            theme.index("struct TreeCardModifier") : theme.index("extension View")
+        ]
+
+        self.assertNotIn(".glassEffect(", card)
+        self.assertIn(".background(Color.white.opacity(0.72))", card)
+
+    def test_settings_uses_system_toolbar_glass_without_nested_button_styles(self) -> None:
+        settings = (IOS_ROOT / "TreeWatering/Features/SettingsView.swift").read_text(
+            encoding="utf-8"
+        )
+        toolbar = settings[settings.index(".toolbar {") : settings.index(".alert(")]
+
+        self.assertNotIn(".buttonStyle(.glass", toolbar)
+
+    def test_hold_control_uses_interactive_glass_and_preserves_hold_gesture(self) -> None:
+        dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
+            encoding="utf-8"
+        )
+        hold = dashboard[
+            dashboard.index("private struct HoldCard") : dashboard.index(
+                "private struct StopCard"
+            )
+        ]
+
+        self.assertIn(".glassEffect(", hold)
+        self.assertIn(".interactive(acceptsTouch)", hold)
+        self.assertIn("DragGesture(minimumDistance: 0)", hold)
+        self.assertIn("model.holdGestureBegan()", hold)
+        self.assertIn("model.holdGestureEnded()", hold)
+
+    def test_emergency_stop_remains_opaque_immediate_and_retryable(self) -> None:
+        dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
+            encoding="utf-8"
+        )
+        stop = dashboard[
+            dashboard.index("private struct StopCard") : dashboard.index(
+                "private struct NoticeBanner"
+            )
+        ]
+
+        self.assertIn(".background(Color.treeWarning)", stop)
+        self.assertIn(".clipShape(", stop)
+        self.assertIn("Text(\"今すぐ停止\")", stop)
+        self.assertNotIn(".glassEffect(", stop)
+        self.assertNotIn(".buttonStyle(.glass", stop)
+        self.assertNotIn(".disabled(model.isStopping)", stop)
+        self.assertNotIn(
+            ".transition(.move(edge: .bottom).combined(with: .opacity))",
+            dashboard,
+        )
+        self.assertNotIn(
+            ".animation(.spring(response: 0.34, dampingFraction: 0.86), value: model.shouldShowStop)",
+            dashboard,
+        )
+
+    def test_manual_stop_allows_retry_while_confirmation_is_pending(self) -> None:
+        view_model = (
+            IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift"
+        ).read_text(encoding="utf-8")
+        stop_now = view_model[
+            view_model.index("func stopNow()") : view_model.index(
+                "func holdGestureBegan()"
+            )
+        ]
+
+        self.assertNotIn("guard !isStopping", stop_now)
+        self.assertIn("activeStopRequests += 1", stop_now)
+        self.assertIn("activeStopRequests -= 1", stop_now)
+        self.assertIn("isStopping = activeStopRequests > 0", stop_now)
 
     def test_dashboard_preview_fixture_is_valid_json(self) -> None:
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
@@ -97,14 +268,33 @@ class IOSAppStructureTests(unittest.TestCase):
         toolbar_index = dashboard.index(".toolbar(.hidden")
         self.assertLess(inset_index, toolbar_index)
         self.assertNotIn("StopCard(model: model)", dashboard[scroll_start:scroll_end])
+        self.assertIn(
+            ".padding(.bottom, model.shouldShowStop ? 136 : 28)",
+            dashboard,
+        )
+
+    def test_disabled_dose_action_uses_readable_dark_foreground(self) -> None:
+        dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
+            encoding="utf-8"
+        )
+        dose = dashboard[
+            dashboard.index("private struct DoseCard") : dashboard.index(
+                "private struct HoldCard"
+            )
+        ]
+
+        self.assertIn(
+            "model.canStartWatering ? Color.white : Color.treeInk",
+            dose,
+        )
 
     def test_manual_stop_invalidates_pending_hold_completion(self) -> None:
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
             encoding="utf-8"
         )
-        self.assertIn("holdOperationGeneration += 1", view_model)
-        self.assertIn("let generationAtStart = holdOperationGeneration", view_model)
-        self.assertIn("holdOperationGeneration != generationAtStart", view_model)
+        self.assertIn("operationGeneration += 1", view_model)
+        self.assertIn("let generationAtStart = operationGeneration", view_model)
+        self.assertIn("operationGeneration != generationAtStart", view_model)
         self.assertIn("holdStartTask?.cancel()", view_model)
         self.assertIn(
             "coordinator.beginHold(operationGeneration: generationAtStart)",
@@ -132,6 +322,70 @@ class IOSAppStructureTests(unittest.TestCase):
             view_model.index("var canStartWatering") : view_model.index("var shouldShowStop")
         ]
         self.assertIn("&& !stopRecommended", can_start)
+
+    def test_stop_remains_visible_during_every_actuation_request(self) -> None:
+        view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        should_show_stop = view_model[
+            view_model.index("var shouldShowStop") : view_model.index(
+                "var canAttemptEndpointChange"
+            )
+        ]
+        for state in [
+            "isActionInFlight",
+            "isStopping",
+            "holdStartInFlight",
+            "holdEndInFlight",
+            "holdActive",
+        ]:
+            self.assertIn(state, should_show_stop)
+
+    def test_status_adoption_is_invalidated_across_every_actuation(self) -> None:
+        view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("StatusAdoptionGate()", view_model)
+        self.assertEqual(view_model.count("statusAdoptionGate.beginOperation()"), 4)
+        self.assertEqual(view_model.count("statusAdoptionGate.endOperation()"), 4)
+
+        refresh = view_model[
+            view_model.index("private func refresh()") : view_model.index(
+                "private func performHoldEnd"
+            )
+        ]
+        self.assertIn("statusAdoptionGate.beginStatusRequest()", refresh)
+        self.assertIn(
+            "let statusObservation = await coordinator.beginStatusObservation()",
+            refresh,
+        )
+        self.assertIn("observation: statusObservation", refresh)
+        self.assertGreaterEqual(
+            refresh.count("statusAdoptionGate.canAdopt(statusToken)"),
+            3,
+        )
+        self.assertIn("await syncSafetyState(statusToken: statusToken)", refresh)
+
+        dose = view_model[
+            view_model.index("    func startConfirmedDose()") : view_model.index(
+                "    func stopNow()"
+            )
+        ]
+        self.assertIn("operationGeneration += 1", dose)
+        self.assertIn("operationGeneration: generationAtStart", dose)
+        self.assertGreaterEqual(view_model.count("beginStatusObservation()"), 2)
+        self.assertGreaterEqual(view_model.count("observation: statusObservation"), 2)
+
+        sync_safety = view_model[
+            view_model.index("private func syncSafetyState") : view_model.index(
+                "private func endpointErrorMessage"
+            )
+        ]
+        self.assertIn("statusToken: StatusAdoptionGate.Token? = nil", sync_safety)
+        self.assertIn("statusAdoptionGate.canAdopt(statusToken)", sync_safety)
+        self.assertIn("snapshot.revision > lastSafetySnapshotRevision", sync_safety)
+        self.assertIn("lastSafetySnapshotRevision = snapshot.revision", sync_safety)
 
     def test_endpoint_change_is_blocked_during_watering_operations(self) -> None:
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
@@ -183,9 +437,13 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn("endpointGeneration == generationAtStart", refresh)
         self.assertIn("activeRefreshGeneration", refresh)
         self.assertIn(
-            "await coordinator?.reconcile(status: latest)\n"
-            "            guard endpointGeneration == generationAtStart else { return }\n"
-            "            await syncSafetyState()",
+            "await coordinator.reconcile(\n"
+            "                status: latest,\n"
+            "                observation: statusObservation\n"
+            "            )\n"
+            "            guard endpointGeneration == generationAtStart,\n"
+            "                  statusAdoptionGate.canAdopt(statusToken) else { return }\n"
+            "            await syncSafetyState(statusToken: statusToken)",
             refresh,
         )
 
@@ -234,14 +492,48 @@ class IOSAppStructureTests(unittest.TestCase):
             )
         )
 
-    def test_endpoint_input_placeholders_include_required_scheme(self) -> None:
-        placeholder = 'TextField("例：http://<ATOMのLAN内IP>", text: $model.endpointInput)'
+    def test_endpoint_input_placeholders_include_required_scheme_and_contrast(self) -> None:
+        placeholder = 'prompt: Text("例：http://<ATOMのLAN内IP>")'
+        contrast = ".foregroundStyle(Color.treeInk.opacity(0.55))"
         for relative_path in [
             "TreeWatering/Features/SetupView.swift",
             "TreeWatering/Features/SettingsView.swift",
         ]:
             source = (IOS_ROOT / relative_path).read_text(encoding="utf-8")
             self.assertIn(placeholder, source)
+            self.assertIn(contrast, source)
+
+    def test_glass_backdrop_has_structured_water_and_leaf_shapes(self) -> None:
+        theme = (IOS_ROOT / "TreeWatering/Design/Theme.swift").read_text(
+            encoding="utf-8"
+        )
+        backdrop = theme[
+            theme.index("struct TreeGlassBackdrop") : theme.index(
+                "struct TreeCardModifier"
+            )
+        ]
+
+        self.assertIn('Image(systemName: "drop.fill")', backdrop)
+        self.assertIn('Image(systemName: "leaf.fill")', backdrop)
+
+    def test_tertiary_labels_keep_readable_contrast(self) -> None:
+        dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Color.treeInk.opacity(0.58)", dashboard)
+        self.assertIn("Color.treeInk.opacity(0.62)", dashboard)
+
+    def test_hold_safety_copy_avoids_orphaned_ending(self) -> None:
+        dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "通信が途切れても、端末側の安全機構が1.5秒以内に停止します",
+            dashboard,
+        )
+        self.assertNotIn("通信が途切れた場合も、", dashboard)
 
     def test_icon_regeneration_dependency_and_command_are_documented(self) -> None:
         requirements = IOS_ROOT / "scripts/requirements.txt"

@@ -7,8 +7,7 @@ struct DashboardView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.treeCanvas.ignoresSafeArea()
-                DashboardBackdrop()
+                TreeGlassBackdrop()
 
                 ScrollView {
                     LazyVStack(spacing: 18) {
@@ -26,7 +25,7 @@ struct DashboardView: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.top, 12)
-                    .padding(.bottom, 40)
+                    .padding(.bottom, model.shouldShowStop ? 136 : 28)
                     .frame(maxWidth: 620)
                     .frame(maxWidth: .infinity)
                 }
@@ -39,7 +38,6 @@ struct DashboardView: View {
                             .padding(.vertical, 10)
                             .frame(maxWidth: .infinity)
                             .background(Color.treeCanvas.opacity(0.94))
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
             }
@@ -53,7 +51,6 @@ struct DashboardView: View {
         } message: {
             Text("ポンプを\(model.selectedDurationSeconds)秒動かします。開始操作は通信エラーでも自動再送しません。")
         }
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: model.shouldShowStop)
         .animation(.easeOut(duration: 0.22), value: model.notice)
     }
 
@@ -66,22 +63,26 @@ struct DashboardView: View {
                 Text("BALCONY WATERING")
                     .font(.caption2.weight(.bold))
                     .tracking(1.6)
-                    .foregroundStyle(Color.treeInk.opacity(0.42))
+                    .foregroundStyle(Color.treeInk.opacity(0.58))
             }
 
             Spacer()
-            ConnectionPill(state: model.connectionState)
-            Button {
-                model.showSettings = true
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Color.treeInk)
-                    .frame(width: 42, height: 42)
-                    .background(Color.white.opacity(0.72))
-                    .clipShape(Circle())
+            GlassEffectContainer(spacing: 10) {
+                HStack(spacing: 10) {
+                    ConnectionPill(state: model.connectionState)
+                    Button {
+                        model.showSettings = true
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(Color.treeInk)
+                            .frame(width: 42, height: 42)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .accessibilityLabel("接続設定")
+                }
             }
-            .accessibilityLabel("接続設定")
         }
         .padding(.horizontal, 2)
     }
@@ -260,11 +261,15 @@ private struct DoseCard: View {
                                 model.selectedDurationSeconds == seconds
                                     ? Color.treeCanvas : Color.treeInk
                             )
-                            .background(
-                                model.selectedDurationSeconds == seconds
-                                    ? Color.treeForest : Color.treeCanvas.opacity(0.76)
+                            .glassEffect(
+                                .regular
+                                    .tint(
+                                        model.selectedDurationSeconds == seconds
+                                            ? Color.treeForest : nil
+                                    )
+                                    .interactive(),
+                                in: Capsule()
                             )
-                            .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -275,7 +280,11 @@ private struct DoseCard: View {
             } label: {
                 HStack {
                     if model.isActionInFlight {
-                        ProgressView().tint(Color.treeCanvas)
+                        ProgressView()
+                            .tint(
+                                model.canStartWatering
+                                    ? Color.treeCanvas : Color.treeInk
+                            )
                     } else {
                         Image(systemName: "drop.fill")
                     }
@@ -284,13 +293,16 @@ private struct DoseCard: View {
                     Image(systemName: "arrow.right")
                 }
                 .font(.headline)
-                .foregroundStyle(Color.treeCanvas)
+                .foregroundStyle(
+                    model.canStartWatering ? Color.white : Color.treeInk
+                )
                 .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity)
                 .frame(height: 58)
-                .background(model.canStartWatering ? Color.treeForest : Color.treeInk.opacity(0.22))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.roundedRectangle(radius: 18))
+            .tint(model.canStartWatering ? Color.treeForest : Color.treeInk.opacity(0.22))
             .disabled(!model.canStartWatering)
         }
         .treeCard()
@@ -309,7 +321,7 @@ private struct HoldCard: View {
             Text("微調整")
                 .font(.caption.weight(.bold))
                 .tracking(1.2)
-                .foregroundStyle(Color.treeInk.opacity(0.46))
+                .foregroundStyle(Color.treeInk.opacity(0.62))
 
             HStack(spacing: 14) {
                 Image(systemName: model.holdGestureActive ? "hand.tap.fill" : "hand.tap")
@@ -334,12 +346,12 @@ private struct HoldCard: View {
             )
             .padding(.horizontal, 18)
             .frame(height: 70)
-            .background(
-                model.holdGestureActive
-                    ? Color.treeWater
-                    : Color.treeCanvas.opacity(acceptsTouch ? 0.78 : 0.42)
+            .glassEffect(
+                .regular
+                    .tint(model.holdGestureActive ? Color.treeWater : nil)
+                    .interactive(acceptsTouch),
+                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -353,7 +365,7 @@ private struct HoldCard: View {
             .accessibilityHint("画面を押している間だけポンプが動きます")
             .sensoryFeedback(.impact(weight: .medium), trigger: model.holdGestureActive)
 
-            Label("通信が途切れた場合も、端末側の安全機構が1.5秒以内に停止します", systemImage: "shield.checkered")
+            Label("通信が途切れても、端末側の安全機構が1.5秒以内に停止します", systemImage: "shield.checkered")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Color.treeInk.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
@@ -386,13 +398,15 @@ private struct StopCard: View {
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity)
             .frame(height: 68)
             .background(Color.treeWarning)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .shadow(color: Color.treeWarning.opacity(0.20), radius: 18, y: 9)
         }
         .buttonStyle(.plain)
-        .disabled(model.isStopping)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .shadow(color: Color.treeWarning.opacity(0.20), radius: 18, y: 9)
+        .accessibilityHint("停止確認中でも繰り返し押せます")
     }
 }
 
@@ -418,12 +432,10 @@ private struct NoticeBanner: View {
             Spacer(minLength: 0)
         }
         .padding(16)
-        .background(tint.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(tint.opacity(0.20), lineWidth: 1)
-        }
+        .glassEffect(
+            .regular.tint(tint.opacity(0.12)),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
     }
 }
 
@@ -456,27 +468,7 @@ private struct ConnectionPill: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 32)
-        .background(Color.white.opacity(0.68))
-        .clipShape(Capsule())
+        .glassEffect(.regular.tint(color.opacity(0.08)), in: Capsule())
         .accessibilityLabel("接続状態、\(title)")
-    }
-}
-
-private struct DashboardBackdrop: View {
-    var body: some View {
-        GeometryReader { proxy in
-            Ellipse()
-                .fill(Color.treeWater.opacity(0.08))
-                .frame(width: proxy.size.width * 0.9, height: proxy.size.width * 0.55)
-                .rotationEffect(.degrees(-24))
-                .offset(x: proxy.size.width * 0.45, y: -80)
-            Ellipse()
-                .fill(Color.treeLeaf.opacity(0.07))
-                .frame(width: proxy.size.width * 0.8, height: proxy.size.width * 0.5)
-                .rotationEffect(.degrees(32))
-                .offset(x: -proxy.size.width * 0.35, y: proxy.size.height * 0.68)
-        }
-        .ignoresSafeArea()
-        .accessibilityHidden(true)
     }
 }

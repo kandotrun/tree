@@ -7,31 +7,41 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("例：http://<ATOMのLAN内IP>", text: $model.endpointInput)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .focused($endpointFocused)
+            ZStack {
+                TreeGlassBackdrop()
 
-                    if let message = model.endpointValidationMessage {
-                        Label(message, systemImage: "exclamationmark.circle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(Color.treeWarning)
+                Form {
+                    Section {
+                        TextField(
+                            "",
+                            text: $model.endpointInput,
+                            prompt: Text("例：http://<ATOMのLAN内IP>")
+                                .foregroundStyle(Color.treeInk.opacity(0.55))
+                        )
+                            .font(.system(.body, design: .monospaced))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .focused($endpointFocused)
+
+                        if let message = model.endpointValidationMessage {
+                            Label(message, systemImage: "exclamationmark.circle.fill")
+                                .font(.footnote)
+                                .foregroundStyle(Color.treeWarning)
+                        }
+                    } header: {
+                        Text("端末アドレス")
+                    } footer: {
+                        Text("private IPまたは.localホスト名のみ保存できます。認証情報やパスは入力しません。")
                     }
-                } header: {
-                    Text("端末アドレス")
-                } footer: {
-                    Text("private IPまたは.localホスト名のみ保存できます。認証情報やパスは入力しません。")
-                }
 
-                Section("接続方式") {
-                    Label("LAN内で端末へ直接接続", systemImage: "wifi.router")
-                    Label("クラウド通信なし", systemImage: "icloud.slash")
-                    Label("アカウント・認証なし", systemImage: "person.crop.circle.badge.xmark")
+                    Section("接続方式") {
+                        Label("LAN内で端末へ直接接続", systemImage: "wifi.router")
+                        Label("クラウド通信なし", systemImage: "icloud.slash")
+                        Label("アカウント・認証なし", systemImage: "person.crop.circle.badge.xmark")
+                    }
                 }
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("接続設定")
             .navigationBarTitleDisplayMode(.inline)
@@ -45,6 +55,7 @@ struct SettingsView: View {
                             dismiss()
                         }
                     }
+                    .tint(Color.treeForest)
                     .fontWeight(.bold)
                     .disabled(!model.canAttemptEndpointChange)
                 }

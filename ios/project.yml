@@ -2,7 +2,7 @@ name: TreeWatering
 options:
   bundleIdPrefix: run.kan
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "26.0"
   groupSortPosition: top
   generateEmptyDirectories: true
 
@@ -14,7 +14,7 @@ targets:
   TreeWatering:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "26.0"
     sources:
       - path: TreeWatering
         excludes:
@@ -30,7 +30,9 @@ targets:
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
         LSApplicationCategoryType: public.app-category.utilities
-        NSLocalNetworkUsageDescription: ベランダの水やり端末へ直接接続して、状態確認と給水操作を行います。
+        NSLocalNetworkUsageDescription: 同じWi-Fiのベランダ端末を自動検出し、状態確認と給水操作をLAN内で行います。
+        NSBonjourServices:
+          - "_tree-watering._tcp"
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
           NSAllowsLocalNetworking: true
@@ -50,7 +52,6 @@ targets:
             "fe80::/10":
               NSExceptionAllowsInsecureHTTPLoads: true
         UILaunchScreen: {}
-        UIRequiresFullScreen: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
     settings:

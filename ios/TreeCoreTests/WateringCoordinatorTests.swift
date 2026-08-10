@@ -32,10 +32,14 @@ private actor AtomAPIStub: AtomAPI {
     private(set) var holdCalls: [String] = []
     private(set) var renewalCalls: [String] = []
     private(set) var stopCallCount = 0
+    private var suspendNextWatering = false
+    private var wateringContinuation: CheckedContinuation<WateringAcknowledgement, Error>?
     private var suspendNextHold = false
     private var holdContinuation: CheckedContinuation<HoldAcknowledgement, Error>?
     private var suspendNextRenewal = false
     private var renewalContinuation: CheckedContinuation<HoldRenewalAcknowledgement, Error>?
+    private var suspendNextStop = false
+    private var stopContinuation: CheckedContinuation<StopAcknowledgement, Error>?
 
     init() {
         statusResult = .failure(APIStubError.transport)
@@ -52,6 +56,12 @@ private actor AtomAPIStub: AtomAPI {
         durationSeconds: Int
     ) async throws -> WateringAcknowledgement {
         wateringCalls.append((requestID, durationSeconds))
+        if suspendNextWatering {
+            suspendNextWatering = false
+            return try await withCheckedThrowingContinuation { continuation in
+                wateringContinuation = continuation
+            }
+        }
         return try wateringResult.get()
     }
 
@@ -79,11 +89,26 @@ private actor AtomAPIStub: AtomAPI {
 
     func stop() async throws -> StopAcknowledgement {
         stopCallCount += 1
+        if suspendNextStop {
+            suspendNextStop = false
+            return try await withCheckedThrowingContinuation { continuation in
+                stopContinuation = continuation
+            }
+        }
         return try stopResult.get()
     }
 
     func setWateringResult(_ result: Result<WateringAcknowledgement, Error>) {
         wateringResult = result
+    }
+
+    func suspendNextWateringCall() {
+        suspendNextWatering = true
+    }
+
+    func succeedSuspendedWatering(_ acknowledgement: WateringAcknowledgement) {
+        wateringContinuation?.resume(returning: acknowledgement)
+        wateringContinuation = nil
     }
 
     func setHoldResult(_ result: Result<HoldAcknowledgement, Error>) {
@@ -115,6 +140,20 @@ private actor AtomAPIStub: AtomAPI {
         renewalContinuation?.resume(throwing: APIStubError.transport)
         renewalContinuation = nil
     }
+
+    func suspendNextStopCall() {
+        suspendNextStop = true
+    }
+
+    func failSuspendedStop() {
+        stopContinuation?.resume(throwing: APIStubError.transport)
+        stopContinuation = nil
+    }
+
+    func succeedSuspendedStop(_ acknowledgement: StopAcknowledgement) {
+        stopContinuation?.resume(returning: acknowledgement)
+        stopContinuation = nil
+    }
 }
 
 final class WateringCoordinatorTests: XCTestCase {
@@ -131,6 +170,167 @@ final class WateringCoordinatorTests: XCTestCase {
         XCTAssertEqual(calls.first?.1, 10)
         let snapshot = await coordinator.snapshot()
         XCTAssertTrue(snapshot.stopRecommended)
+    }
+
+    func testStatusObservationBeforeDoseCannotClearStopRecommendation() async throws {
+        let api = AtomAPIStub()
+        await api.setWateringResult(.success(Self.wateringAck(requestID: "observed-dose")))
+        let coordinator = WateringCoordinator(api: api, requestID: { "observed-dose" })
+        let observation = await coordinator.beginStatusObservation()
+
+        try await coordinator.startDose(
+            durationSeconds: 10,
+            maximumDurationSeconds: 180,
+            operationGeneration: 1
+        )
+        await coordinator.reconcile(
+            status: Self.idleStatus(),
+            observation: observation
+        )
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertTrue(snapshot.stopRecommended)
+    }
+
+    func testStatusObservationDuringDoseCannotClearAcceptedDose() async throws {
+        let api = AtomAPIStub()
+        await api.suspendNextWateringCall()
+        let coordinator = WateringCoordinator(api: api, requestID: { "observed-in-flight-dose" })
+        let doseTask = Task {
+            try await coordinator.startDose(
+                durationSeconds: 10,
+                maximumDurationSeconds: 180,
+                operationGeneration: 1
+            )
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.wateringCalls.count == 1
+        }
+        let observation = await coordinator.beginStatusObservation()
+
+        await api.succeedSuspendedWatering(
+            Self.wateringAck(requestID: "observed-in-flight-dose")
+        )
+        try await doseTask.value
+        await coordinator.reconcile(
+            status: Self.idleStatus(),
+            observation: observation
+        )
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertTrue(snapshot.stopRecommended)
+    }
+
+    func testOlderDoseDoesNotStartAfterNewerStop() async throws {
+        let api = AtomAPIStub()
+        await api.setWateringResult(.success(Self.wateringAck(requestID: "older-dose")))
+        let coordinator = WateringCoordinator(api: api, requestID: { "older-dose" })
+
+        try await coordinator.stop(operationGeneration: 2)
+        do {
+            try await coordinator.startDose(
+                durationSeconds: 10,
+                maximumDurationSeconds: 180,
+                operationGeneration: 1
+            )
+            XCTFail("Expected older dose to be invalidated")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .doseStartInvalidated)
+        }
+
+        let wateringCallCount = await api.wateringCalls.count
+        XCTAssertEqual(wateringCallCount, 0)
+    }
+
+    func testLateDoseAcknowledgementAfterStopTriggersAnotherStop() async throws {
+        let api = AtomAPIStub()
+        await api.suspendNextWateringCall()
+        let coordinator = WateringCoordinator(api: api, requestID: { "late-dose" })
+        let doseTask = Task {
+            try await coordinator.startDose(
+                durationSeconds: 10,
+                maximumDurationSeconds: 180,
+                operationGeneration: 1
+            )
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.wateringCalls.count == 1
+        }
+
+        try await coordinator.stop(operationGeneration: 2)
+        await api.succeedSuspendedWatering(Self.wateringAck(requestID: "late-dose"))
+
+        do {
+            try await doseTask.value
+            XCTFail("Expected late dose acknowledgement to be invalidated")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .doseStartInvalidated)
+        }
+
+        let stopCallCount = await api.stopCallCount
+        let snapshot = await coordinator.snapshot()
+        XCTAssertEqual(stopCallCount, 2)
+        XCTAssertTrue(snapshot.stopRecommended)
+    }
+
+    func testLateDoseRiskCannotBeClearedByEarlierStopResponse() async throws {
+        let api = AtomAPIStub()
+        await api.suspendNextWateringCall()
+        await api.suspendNextStopCall()
+        await api.setStopResult(
+            .success(StopAcknowledgement(stopped: false, state: .watering))
+        )
+        let coordinator = WateringCoordinator(api: api, requestID: { "late-after-stop" })
+        let doseTask = Task {
+            try await coordinator.startDose(
+                durationSeconds: 10,
+                maximumDurationSeconds: 180,
+                operationGeneration: 1
+            )
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.wateringCalls.count == 1
+        }
+
+        let stopTask = Task {
+            try await coordinator.stop(operationGeneration: 2)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.stopCallCount == 1
+        }
+
+        await api.succeedSuspendedWatering(
+            Self.wateringAck(requestID: "late-after-stop")
+        )
+        do {
+            try await doseTask.value
+            XCTFail("Expected the late dose acknowledgement to be invalidated")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .doseStartInvalidated)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.stopCallCount == 2
+        }
+
+        await api.succeedSuspendedStop(
+            StopAcknowledgement(stopped: true, state: .idle)
+        )
+        try await stopTask.value
+
+        let snapshot = await coordinator.snapshot()
+        let stopCallCount = await api.stopCallCount
+        XCTAssertEqual(stopCallCount, 2)
+        XCTAssertTrue(snapshot.stopRecommended)
+
+        await api.setStopResult(
+            .success(StopAcknowledgement(stopped: true, state: .idle))
+        )
+        try await coordinator.stop(operationGeneration: 3)
+
+        let recoveredSnapshot = await coordinator.snapshot()
+        let recoveredStopCallCount = await api.stopCallCount
+        XCTAssertEqual(recoveredStopCallCount, 3)
+        XCTAssertFalse(recoveredSnapshot.stopRecommended)
     }
 
     func testAmbiguousDoseIsNotRetried() async {
@@ -232,6 +432,90 @@ final class WateringCoordinatorTests: XCTestCase {
         XCTAssertFalse(snapshot.stopRecommended)
     }
 
+    func testStaleStopFailureDoesNotOverrideNewerConfirmedStop() async throws {
+        let api = AtomAPIStub()
+        await api.suspendNextStopCall()
+        let coordinator = WateringCoordinator(api: api)
+        let olderStop = Task {
+            try await coordinator.stop(operationGeneration: 1)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.stopCallCount == 1
+        }
+
+        try await coordinator.stop(operationGeneration: 2)
+        await api.failSuspendedStop()
+
+        do {
+            try await olderStop.value
+            XCTFail("Expected older stop request to fail")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .stopUnconfirmed)
+        }
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertFalse(snapshot.stopRecommended)
+    }
+
+    func testStaleUnconfirmedStopDoesNotOverrideNewerConfirmedStop() async throws {
+        let api = AtomAPIStub()
+        await api.suspendNextStopCall()
+        let coordinator = WateringCoordinator(api: api)
+        let olderStop = Task {
+            try await coordinator.stop(operationGeneration: 1)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.stopCallCount == 1
+        }
+
+        try await coordinator.stop(operationGeneration: 2)
+        await api.succeedSuspendedStop(
+            StopAcknowledgement(stopped: false, state: .watering)
+        )
+
+        do {
+            try await olderStop.value
+            XCTFail("Expected older STOP acknowledgement to remain unconfirmed")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .stopUnconfirmed)
+        }
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertFalse(snapshot.stopRecommended)
+    }
+
+    func testStaleIdleReconcileDoesNotConfirmSuspendedStop() async throws {
+        let api = AtomAPIStub()
+        await api.setWateringResult(.success(Self.wateringAck(requestID: "ios-stale-idle")))
+        await api.suspendNextStopCall()
+        let coordinator = WateringCoordinator(api: api, requestID: { "ios-stale-idle" })
+        try await coordinator.startDose(durationSeconds: 10, maximumDurationSeconds: 180)
+        let observation = await coordinator.beginStatusObservation()
+
+        let stopTask = Task {
+            try await coordinator.stop(operationGeneration: 1)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.stopCallCount == 1
+        }
+
+        await coordinator.reconcile(
+            status: Self.idleStatus(),
+            observation: observation
+        )
+        await api.failSuspendedStop()
+
+        do {
+            try await stopTask.value
+            XCTFail("Expected stop request to remain unconfirmed")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .stopUnconfirmed)
+        }
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertTrue(snapshot.stopRecommended)
+    }
+
     func testAmbiguousHoldStartSendsBestEffortStop() async {
         let api = AtomAPIStub()
         let coordinator = WateringCoordinator(api: api, requestID: { "ios-hold" })
@@ -249,6 +533,15 @@ final class WateringCoordinatorTests: XCTestCase {
         XCTAssertEqual(holdCalls, ["ios-hold"])
         XCTAssertEqual(stopCallCount, 1)
         XCTAssertFalse(snapshot.holdActive)
+    }
+
+    func testSnapshotsCarryMonotonicAdoptionRevisions() async {
+        let coordinator = WateringCoordinator(api: AtomAPIStub())
+
+        let first = await coordinator.snapshot()
+        let second = await coordinator.snapshot()
+
+        XCTAssertGreaterThan(second.revision, first.revision)
     }
 
     func testStopInvalidatesOlderHoldStartBeforeRequest() async throws {
@@ -319,6 +612,51 @@ final class WateringCoordinatorTests: XCTestCase {
         XCTAssertEqual(stopCallCount, 2)
     }
 
+    func testSameGenerationStopCannotLetLateHoldAcknowledgementHideStop() async throws {
+        let api = AtomAPIStub()
+        await api.suspendNextHoldCall()
+        await api.suspendNextStopCall()
+        await api.setStopResult(
+            .success(StopAcknowledgement(stopped: false, state: .watering))
+        )
+        let coordinator = WateringCoordinator(api: api, requestID: { "same-generation-hold" })
+        let holdTask = Task {
+            try await coordinator.beginHold(operationGeneration: 1)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.holdCalls == ["same-generation-hold"]
+        }
+
+        let stopTask = Task {
+            try await coordinator.stop(operationGeneration: 1)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.stopCallCount == 1
+        }
+
+        await api.succeedSuspendedHold(
+            Self.holdAck(requestID: "same-generation-hold")
+        )
+        do {
+            try await holdTask.value
+            XCTFail("Expected late HOLD acknowledgement to be invalidated")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .holdStartInvalidated)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.stopCallCount == 2
+        }
+
+        await api.succeedSuspendedStop(
+            StopAcknowledgement(stopped: true, state: .idle)
+        )
+        try await stopTask.value
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertFalse(snapshot.holdActive)
+        XCTAssertTrue(snapshot.stopRecommended)
+    }
+
     func testHeartbeatFailureStopsHold() async throws {
         let api = AtomAPIStub()
         await api.setHoldResult(
@@ -349,6 +687,35 @@ final class WateringCoordinatorTests: XCTestCase {
         let snapshot = await coordinator.snapshot()
         XCTAssertEqual(renewalCalls, ["ios-hold"])
         XCTAssertFalse(snapshot.holdActive)
+        XCTAssertTrue(snapshot.stopRecommended)
+    }
+
+    func testStatusObservationBeforeHeartbeatFailureCannotClearStopRecommendation() async throws {
+        let api = AtomAPIStub()
+        await api.setHoldResult(.success(Self.holdAck(requestID: "heartbeat-observation")))
+        await api.suspendNextRenewalCall()
+        let coordinator = WateringCoordinator(
+            api: api,
+            requestID: { "heartbeat-observation" },
+            heartbeatIntervalNanoseconds: 50_000_000
+        )
+
+        try await coordinator.beginHold(operationGeneration: 0)
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.renewalCalls == ["heartbeat-observation"]
+        }
+        let observation = await coordinator.beginStatusObservation()
+        await api.failSuspendedRenewal()
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.stopCallCount == 1
+        }
+
+        await coordinator.reconcile(
+            status: Self.idleStatus(),
+            observation: observation
+        )
+
+        let snapshot = await coordinator.snapshot()
         XCTAssertTrue(snapshot.stopRecommended)
     }
 
@@ -427,5 +794,10 @@ final class WateringCoordinatorTests: XCTestCase {
             leaseMilliseconds: 1_500,
             maximumRunMilliseconds: 600_000
         )
+    }
+
+    private static func idleStatus() -> AtomStatus {
+        let data = Data(#"{"state":"IDLE","pump":false,"armed":true,"watering_mode":"NONE","moisture_adc":1600,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":0,"remaining_ms":0,"hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"uptime_ms":1000,"wifi_rssi":-50,"firmware_version":"test","last_request_id":"older-status","last_runtime_ms":0,"last_stop_reason":"NONE","error_reason":null}"#.utf8)
+        return try! JSONDecoder().decode(AtomStatus.self, from: data)
     }
 }

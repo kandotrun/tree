@@ -35,6 +35,9 @@ extension AtomState: Codable {
 }
 
 public struct AtomStatus: Codable, Equatable, Sendable {
+    public let deviceType: String?
+    public let apiVersion: Int?
+    public let deviceName: String?
     public let state: AtomState
     public let pump: Bool
     public let uptimeMilliseconds: UInt64
@@ -59,7 +62,24 @@ public struct AtomStatus: Codable, Equatable, Sendable {
         state == .idle && pump == false && armed
     }
 
+    public var isCompatibleDiscoveryTarget: Bool {
+        guard deviceType == "tree-watering",
+              apiVersion == 1,
+              let deviceName,
+              !deviceName.isEmpty,
+              !firmwareVersion.isEmpty,
+              (1 ... 180).contains(maximumDurationSeconds),
+              (1 ... maximumDurationSeconds).contains(defaultDurationSeconds) else {
+            return false
+        }
+        return holdLeaseMilliseconds == 1_500
+            && holdMaximumRunMilliseconds == 600_000
+    }
+
     enum CodingKeys: String, CodingKey {
+        case deviceType = "device_type"
+        case apiVersion = "api_version"
+        case deviceName = "device_name"
         case state
         case pump
         case uptimeMilliseconds = "uptime_ms"

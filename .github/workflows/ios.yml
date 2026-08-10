@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - "ios/**"
+      - "firmware/src/main.cpp"
+      - "firmware/include/config.example.h"
       - ".github/workflows/ios.yml"
   push:
     branches: [main]
     paths:
       - "ios/**"
+      - "firmware/src/main.cpp"
+      - "firmware/include/config.example.h"
       - ".github/workflows/ios.yml"
 
 permissions:
@@ -20,7 +24,7 @@ concurrency:
 
 jobs:
   simulator:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,7 +61,7 @@ jobs:
           app_path="ios/build/Build/Products/Debug-iphonesimulator/TreeWatering.app"
           test -d "$app_path"
           xcrun simctl install "$simulator_id" "$app_path"
-          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering
+          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview-setup
           sleep 2
           xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-setup.png
           xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview

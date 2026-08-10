@@ -41,31 +41,49 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var holdEndInFlight = false
     @Published private(set) var holdActive = false
     @Published private(set) var stopRecommended = false
+    @Published private(set) var isDiscovering = false
+    @Published private(set) var discoveryMessage = "同じWi-Fi内を検索中です…"
     @Published var notice: AppNotice?
 
     private let defaults: UserDefaults
     private let isPreviewMode: Bool
+    private let discovery = BonjourDeviceDiscovery()
     private var api: AtomAPIClient?
     private var coordinator: WateringCoordinator?
     private var pollingTask: Task<Void, Never>?
     private var holdStartTask: Task<Void, Never>?
     private var pendingEndpoint: DeviceEndpoint?
     private var isSceneActive = false
-    private var holdOperationGeneration = 0
+    private var operationGeneration = 0
+    private var activeStopRequests = 0
     private var endpointGeneration = 0
+    private var lastSafetySnapshotRevision: UInt = 0
+    private var statusAdoptionGate = StatusAdoptionGate()
     private var activeRefreshGeneration: Int?
+    private var discoveryGeneration = 0
+    private var discoveryTimeoutTask: Task<Void, Never>?
+    private var discoveryValidationTasks: [String: Task<Void, Never>] = [:]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 #if DEBUG
+        let setupPreview = ProcessInfo.processInfo.arguments.contains("-ui-preview-setup")
         let wateringPreview = ProcessInfo.processInfo.arguments.contains("-ui-preview-watering")
-        let previewMode = wateringPreview
+        let previewMode = setupPreview
+            || wateringPreview
             || ProcessInfo.processInfo.arguments.contains("-ui-preview")
 #else
+        let setupPreview = false
         let wateringPreview = false
         let previewMode = false
 #endif
         isPreviewMode = previewMode
+        if setupPreview {
+            endpointInput = ""
+            isDiscovering = true
+            connectionState = .unconfigured
+            return
+        }
         if previewMode,
            let endpoint = try? DeviceEndpoint("http://127.0.0.1") {
             endpointInput = endpoint.baseURL.absoluteString
@@ -114,7 +132,14 @@ final class DashboardViewModel: ObservableObject {
     }
 
     var shouldShowStop: Bool {
-        stopRecommended || status?.pump == true || status?.state == .watering
+        stopRecommended
+            || status?.pump == true
+            || status?.state == .watering
+            || isActionInFlight
+            || isStopping
+            || holdStartInFlight
+            || holdEndInFlight
+            || holdActive
     }
 
     var canAttemptEndpointChange: Bool {
@@ -171,14 +196,55 @@ final class DashboardViewModel: ObservableObject {
         showForceEndpointConfirmation = false
     }
 
+    func startDiscovery() {
+        guard !isPreviewMode, isSceneActive, !isDiscovering else { return }
+        guard api == nil else { return }
+        guard canAttemptEndpointChange else {
+            discoveryMessage = "給水操作が完了してから端末を探してください"
+            return
+        }
+
+        stopDiscovery(invalidate: true)
+        let generationAtStart = discoveryGeneration
+        isDiscovering = true
+        discoveryMessage = "同じWi-Fi内を検索中です…"
+        endpointValidationMessage = nil
+
+        discovery.start(
+            onCandidate: { [weak self] candidate in
+                self?.beginDiscoveryValidation(
+                    candidate,
+                    generation: generationAtStart
+                )
+            },
+            onState: { [weak self] state in
+                self?.handleDiscoveryState(state, generation: generationAtStart)
+            }
+        )
+
+        discoveryTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 8_000_000_000)
+            } catch {
+                return
+            }
+            guard let self,
+                  discoveryGeneration == generationAtStart,
+                  api == nil else { return }
+            stopDiscovery(invalidate: true)
+            discoveryMessage = "端末が見つかりませんでした"
+        }
+    }
+
     func activate() {
         isSceneActive = true
         if isPreviewMode {
-            connectionState = .online
+            connectionState = hasEndpoint ? .online : .unconfigured
             return
         }
         guard api != nil else {
             connectionState = .unconfigured
+            startDiscovery()
             return
         }
         startPolling()
@@ -188,6 +254,7 @@ final class DashboardViewModel: ObservableObject {
         isSceneActive = false
         pollingTask?.cancel()
         pollingTask = nil
+        stopDiscovery(invalidate: true)
         if holdGestureActive || holdStartInFlight || holdActive {
             holdGestureEnded()
         }
@@ -208,46 +275,59 @@ final class DashboardViewModel: ObservableObject {
               let coordinator,
               let maximum = status?.maximumDurationSeconds else { return }
         let duration = selectedDurationSeconds
+        operationGeneration += 1
+        let generationAtStart = operationGeneration
         isActionInFlight = true
+        statusAdoptionGate.beginOperation()
         notice = nil
 
         Task {
-            defer { isActionInFlight = false }
             do {
                 try await coordinator.startDose(
                     durationSeconds: duration,
-                    maximumDurationSeconds: maximum
+                    maximumDurationSeconds: maximum,
+                    operationGeneration: generationAtStart
                 )
                 notice = AppNotice(level: .success, text: "給水を開始しました")
             } catch {
                 notice = AppNotice(level: .warning, text: actionErrorMessage(error))
             }
             await syncSafetyState()
+            statusAdoptionGate.endOperation()
+            isActionInFlight = false
             await refresh()
         }
     }
 
     func stopNow() {
-        guard !isStopping, let coordinator else { return }
-        holdOperationGeneration += 1
-        let generationAtStop = holdOperationGeneration
+        guard let coordinator else { return }
+        operationGeneration += 1
+        let generationAtStop = operationGeneration
         holdStartTask?.cancel()
         holdStartTask = nil
+        activeStopRequests += 1
         isStopping = true
+        statusAdoptionGate.beginOperation()
         holdGestureActive = false
         notice = nil
         Task {
-            defer { isStopping = false }
             do {
                 try await coordinator.stop(operationGeneration: generationAtStop)
-                notice = AppNotice(level: .success, text: "停止を確認しました")
+                if generationAtStop == operationGeneration {
+                    notice = AppNotice(level: .success, text: "停止を確認しました")
+                }
             } catch {
-                notice = AppNotice(
-                    level: .warning,
-                    text: "停止を確認できません。端末とポンプを直接確認してください"
-                )
+                if generationAtStop == operationGeneration {
+                    notice = AppNotice(
+                        level: .warning,
+                        text: "停止を確認できません。端末とポンプを直接確認してください"
+                    )
+                }
             }
             await syncSafetyState()
+            statusAdoptionGate.endOperation()
+            activeStopRequests -= 1
+            isStopping = activeStopRequests > 0
             await refresh()
         }
     }
@@ -256,26 +336,28 @@ final class DashboardViewModel: ObservableObject {
         guard canStartWatering, !holdGestureActive, let coordinator else { return }
         holdGestureActive = true
         holdStartInFlight = true
+        statusAdoptionGate.beginOperation()
         notice = nil
-        let generationAtStart = holdOperationGeneration
+        let generationAtStart = operationGeneration
 
         holdStartTask = Task {
             defer {
+                statusAdoptionGate.endOperation()
                 holdStartInFlight = false
                 holdStartTask = nil
             }
-            guard holdOperationGeneration == generationAtStart, !isStopping else {
+            guard operationGeneration == generationAtStart, !isStopping else {
                 return
             }
             do {
                 try await coordinator.beginHold(operationGeneration: generationAtStart)
             } catch {
-                if holdOperationGeneration == generationAtStart, !isStopping {
+                if operationGeneration == generationAtStart, !isStopping {
                     notice = AppNotice(level: .warning, text: actionErrorMessage(error))
                 }
             }
             await syncSafetyState()
-            if holdOperationGeneration != generationAtStart {
+            if operationGeneration != generationAtStart {
                 return
             }
             if !holdGestureActive, !isStopping {
@@ -288,14 +370,111 @@ final class DashboardViewModel: ObservableObject {
         let shouldEndHold = holdGestureActive || holdStartInFlight || holdActive
         holdGestureActive = false
         guard !isStopping, shouldEndHold, !holdEndInFlight else { return }
-        holdOperationGeneration += 1
-        let operationGeneration = holdOperationGeneration
+        operationGeneration += 1
+        let generationAtEnd = operationGeneration
         holdStartTask?.cancel()
         holdEndInFlight = true
-        Task { await performHoldEnd(operationGeneration: operationGeneration) }
+        statusAdoptionGate.beginOperation()
+        Task { await performHoldEnd(operationGeneration: generationAtEnd) }
+    }
+
+    private func handleDiscoveryState(
+        _ state: BonjourDeviceDiscovery.State,
+        generation: Int
+    ) {
+        guard discoveryGeneration == generation, api == nil else { return }
+        switch state {
+        case .ready:
+            discoveryMessage = "同じWi-Fi内を検索中です…"
+        case .waiting:
+            discoveryMessage = "ローカルネットワークの許可を確認しています…"
+        case .failed:
+            stopDiscovery(invalidate: true)
+            discoveryMessage = "自動検出を開始できませんでした"
+        }
+    }
+
+    private func beginDiscoveryValidation(
+        _ candidate: BonjourDeviceCandidate,
+        generation: Int
+    ) {
+        guard discoveryGeneration == generation,
+              api == nil,
+              discoveryValidationTasks[candidate.name] == nil else { return }
+        discoveryMessage = "端末を確認しています…"
+        discoveryValidationTasks[candidate.name] = Task { [weak self] in
+            guard let self else { return }
+            await validateDiscoveredCandidate(candidate, generation: generation)
+            discoveryValidationTasks[candidate.name] = nil
+        }
+    }
+
+    private func stopDiscovery(invalidate: Bool) {
+        if invalidate {
+            discoveryGeneration += 1
+        }
+        discovery.stop()
+        discoveryTimeoutTask?.cancel()
+        discoveryTimeoutTask = nil
+        for task in discoveryValidationTasks.values {
+            task.cancel()
+        }
+        discoveryValidationTasks.removeAll()
+        isDiscovering = false
+    }
+
+    private func validateDiscoveredCandidate(
+        _ candidate: BonjourDeviceCandidate,
+        generation: Int
+    ) async {
+        let client = AtomAPIClient(endpoint: candidate.endpoint, requestTimeout: 2)
+        do {
+            let verifiedStatus = try await client.fetchStatus()
+            guard !Task.isCancelled,
+                  discoveryGeneration == generation,
+                  api == nil,
+                  isSceneActive else { return }
+            guard verifiedStatus.isCompatibleDiscoveryTarget,
+                  verifiedStatus.deviceName?.lowercased() == candidate.name else {
+                discoveryMessage = "対応する端末を確認できません。探し続けています…"
+                return
+            }
+
+            guard applyEndpoint(candidate.endpoint),
+                  let statusToken = statusAdoptionGate.beginStatusRequest(),
+                  let coordinator else { return }
+            let endpointGenerationAtStart = endpointGeneration
+            let statusObservation = await coordinator.beginStatusObservation()
+            guard endpointGeneration == endpointGenerationAtStart,
+                  statusAdoptionGate.canAdopt(statusToken) else { return }
+            status = verifiedStatus
+            connectionState = .online
+            if let normalized = WateringDurationPolicy.normalized(
+                currentSeconds: selectedDurationSeconds,
+                maximumSeconds: verifiedStatus.maximumDurationSeconds
+            ) {
+                selectedDurationSeconds = normalized
+            }
+            await coordinator.reconcile(
+                status: verifiedStatus,
+                observation: statusObservation
+            )
+            guard endpointGeneration == endpointGenerationAtStart,
+                  statusAdoptionGate.canAdopt(statusToken) else { return }
+            await syncSafetyState(statusToken: statusToken)
+            guard endpointGeneration == endpointGenerationAtStart,
+                  statusAdoptionGate.canAdopt(statusToken) else { return }
+            notice = AppNotice(level: .success, text: "端末を自動検出して接続しました")
+        } catch is CancellationError {
+            return
+        } catch {
+            guard discoveryGeneration == generation, api == nil else { return }
+            discoveryMessage = "応答を確認できません。探し続けています…"
+        }
     }
 
     private func applyEndpoint(_ endpoint: DeviceEndpoint) -> Bool {
+        stopDiscovery(invalidate: true)
         let normalized = endpoint.baseURL.absoluteString
         defaults.set(normalized, forKey: Self.endpointDefaultsKey)
         endpointInput = normalized
@@ -309,6 +488,7 @@ final class DashboardViewModel: ObservableObject {
 
     private func install(endpoint: DeviceEndpoint) {
         endpointGeneration += 1
+        lastSafetySnapshotRevision = 0
         activeRefreshGeneration = nil
         isRefreshing = false
         pollingTask?.cancel()
@@ -339,7 +519,10 @@ final class DashboardViewModel: ObservableObject {
 
     private func refresh() async {
         let generationAtStart = endpointGeneration
-        guard activeRefreshGeneration == nil, let api else { return }
+        guard activeRefreshGeneration == nil,
+              let api,
+              let coordinator,
+              let statusToken = statusAdoptionGate.beginStatusRequest() else { return }
         activeRefreshGeneration = generationAtStart
         isRefreshing = true
         if status == nil {
@@ -352,9 +535,16 @@ final class DashboardViewModel: ObservableObject {
             }
         }
 
+        let statusObservation = await coordinator.beginStatusObservation()
+        guard endpointGeneration == generationAtStart,
+              statusAdoptionGate.canAdopt(statusToken),
+              !Task.isCancelled,
+              isSceneActive else { return }
+
         do {
             let latest = try await api.fetchStatus()
             guard endpointGeneration == generationAtStart,
+                  statusAdoptionGate.canAdopt(statusToken),
                   !Task.isCancelled,
                   isSceneActive else { return }
             status = latest
@@ -365,40 +555,55 @@ final class DashboardViewModel: ObservableObject {
             ) {
                 selectedDurationSeconds = normalized
             }
-            await coordinator?.reconcile(status: latest)
-            guard endpointGeneration == generationAtStart else { return }
-            await syncSafetyState()
+            await coordinator.reconcile(
+                status: latest,
+                observation: statusObservation
+            )
+            guard endpointGeneration == generationAtStart,
+                  statusAdoptionGate.canAdopt(statusToken) else { return }
+            await syncSafetyState(statusToken: statusToken)
         } catch is CancellationError {
             return
         } catch {
-            if endpointGeneration == generationAtStart, isSceneActive {
+            if endpointGeneration == generationAtStart,
+               statusAdoptionGate.canAdopt(statusToken),
+               isSceneActive {
                 connectionState = .offline
             }
         }
     }
 
     private func performHoldEnd(operationGeneration: Int) async {
-        defer { holdEndInFlight = false }
-        guard let coordinator else { return }
-        do {
-            try await coordinator.endHold(operationGeneration: operationGeneration)
-        } catch {
-            notice = AppNotice(
-                level: .warning,
-                text: "停止を確認できません。端末とポンプを直接確認してください"
-            )
+        if let coordinator {
+            do {
+                try await coordinator.endHold(operationGeneration: operationGeneration)
+            } catch {
+                notice = AppNotice(
+                    level: .warning,
+                    text: "停止を確認できません。端末とポンプを直接確認してください"
+                )
+            }
+            await syncSafetyState()
         }
-        await syncSafetyState()
+        statusAdoptionGate.endOperation()
+        holdEndInFlight = false
         if isSceneActive {
             await refresh()
         }
     }
 
-    private func syncSafetyState() async {
+    private func syncSafetyState(
+        statusToken: StatusAdoptionGate.Token? = nil
+    ) async {
         let generationAtStart = endpointGeneration
         guard let coordinator else { return }
         let snapshot = await coordinator.snapshot()
         guard endpointGeneration == generationAtStart else { return }
+        if let statusToken {
+            guard statusAdoptionGate.canAdopt(statusToken) else { return }
+        }
+        guard snapshot.revision > lastSafetySnapshotRevision else { return }
+        lastSafetySnapshotRevision = snapshot.revision
         stopRecommended = snapshot.stopRecommended
         holdActive = snapshot.holdActive
     }
@@ -435,6 +640,8 @@ final class DashboardViewModel: ObservableObject {
             return "長押し給水はすでに開始処理中です"
         case .holdStartInvalidated:
             return "停止操作を優先し、長押し給水を開始しませんでした"
+        case .doseStartInvalidated:
+            return "停止操作を優先しました。状態を確認し、必要ならもう一度停止してください"
         }
     }
 

@@ -8,9 +8,15 @@ public enum WateringSafetyError: Error, Equatable, Sendable {
     case ambiguousHoldStart
     case holdAlreadyActive
     case holdStartInvalidated
+    case doseStartInvalidated
+}
+
+public struct WateringStatusObservation: Equatable, Sendable {
+    fileprivate let revision: UInt
 }
 
 public struct WateringSnapshot: Equatable, Sendable {
+    public let revision: UInt
     public let stopRecommended: Bool
     public let holdActive: Bool
     public let holdStarting: Bool
@@ -29,6 +35,12 @@ public actor WateringCoordinator {
     private var holdStarting = false
     private var activeHoldRequestID: String?
     private var latestInvalidationGeneration = 0
+    private var stopConfirmationRevision = 0
+    // A STOP acknowledgement can clear the warning only when no later start
+    // outcome could have re-armed the pump after that STOP was dispatched.
+    private var actuationRiskRevision: UInt = 0
+    private var snapshotRevision: UInt = 0
+    private var statusObservationRevision: UInt = 0
     private var heartbeatTask: Task<Void, Never>?
 
     public init(
@@ -48,22 +60,33 @@ public actor WateringCoordinator {
     }
 
     public func snapshot() -> WateringSnapshot {
-        WateringSnapshot(
+        snapshotRevision &+= 1
+        return WateringSnapshot(
+            revision: snapshotRevision,
             stopRecommended: stopRecommended,
             holdActive: activeHoldRequestID != nil,
             holdStarting: holdStarting
         )
     }
 
+    public func beginStatusObservation() -> WateringStatusObservation {
+        WateringStatusObservation(revision: statusObservationRevision)
+    }
+
     public func startDose(
         durationSeconds: Int,
-        maximumDurationSeconds: Int
+        maximumDurationSeconds: Int,
+        operationGeneration: Int = 0
     ) async throws {
         let upperBound = min(180, maximumDurationSeconds)
         guard upperBound >= 1,
               (1 ... upperBound).contains(durationSeconds) else {
             throw WateringSafetyError.invalidDuration
         }
+        guard registerStartOperation(operationGeneration) else {
+            throw WateringSafetyError.doseStartInvalidated
+        }
+        invalidateStatusObservations()
 
         let id = requestID()
         let acknowledgement: WateringAcknowledgement
@@ -72,14 +95,21 @@ public actor WateringCoordinator {
                 requestID: id,
                 durationSeconds: durationSeconds
             )
+            guard isCurrentStartOperation(operationGeneration) else {
+                markActuationRisk()
+                await bestEffortStop()
+                throw WateringSafetyError.doseStartInvalidated
+            }
+        } catch let error as WateringSafetyError {
+            throw error
         } catch let error as AtomAPIError {
             if case let .http(_, code) = error {
                 throw WateringSafetyError.rejected(code)
             }
-            stopRecommended = true
+            markActuationRisk()
             throw WateringSafetyError.ambiguousStart
         } catch {
-            stopRecommended = true
+            markActuationRisk()
             throw WateringSafetyError.ambiguousStart
         }
 
@@ -87,36 +117,50 @@ public actor WateringCoordinator {
               acknowledgement.requestID == id,
               acknowledgement.state == .watering,
               acknowledgement.scheduledMilliseconds == durationSeconds * 1_000 else {
-            stopRecommended = true
+            markActuationRisk()
             throw WateringSafetyError.ambiguousStart
         }
-        stopRecommended = true
+        markActuationRisk()
     }
 
     public func stop(operationGeneration: Int) async throws {
         invalidateHoldStarts(upTo: operationGeneration)
+        invalidateStatusObservations()
         holdPressed = false
         activeHoldRequestID = nil
         heartbeatTask?.cancel()
         heartbeatTask = nil
+        let confirmationRevisionAtStart = stopConfirmationRevision
+        let actuationRiskRevisionAtStart = actuationRiskRevision
 
         do {
             let acknowledgement = try await api.stop()
             guard acknowledgement.stopped,
                   acknowledgement.state == .idle else {
+                if stopConfirmationRevision == confirmationRevisionAtStart {
+                    stopRecommended = true
+                }
                 throw WateringSafetyError.stopUnconfirmed
             }
-            stopRecommended = false
+            stopConfirmationRevision &+= 1
+            if actuationRiskRevision == actuationRiskRevisionAtStart {
+                stopRecommended = false
+            }
+        } catch let error as WateringSafetyError {
+            throw error
         } catch {
-            stopRecommended = true
+            if stopConfirmationRevision == confirmationRevisionAtStart {
+                stopRecommended = true
+            }
             throw WateringSafetyError.stopUnconfirmed
         }
     }
 
     public func beginHold(operationGeneration: Int) async throws {
-        guard isCurrentHoldStart(operationGeneration) else {
+        guard registerStartOperation(operationGeneration) else {
             throw WateringSafetyError.holdStartInvalidated
         }
+        invalidateStatusObservations()
         guard !holdStarting, activeHoldRequestID == nil else {
             throw WateringSafetyError.holdAlreadyActive
         }
@@ -133,21 +177,21 @@ public actor WateringCoordinator {
             if case let .http(_, code) = error {
                 throw WateringSafetyError.rejected(code)
             }
-            stopRecommended = true
+            markActuationRisk()
             await bestEffortStop()
             throw WateringSafetyError.ambiguousHoldStart
         } catch {
             holdStarting = false
             holdPressed = false
-            stopRecommended = true
+            markActuationRisk()
             await bestEffortStop()
             throw WateringSafetyError.ambiguousHoldStart
         }
 
-        guard isCurrentHoldStart(operationGeneration) else {
+        guard isCurrentStartOperation(operationGeneration) else {
             holdStarting = false
             holdPressed = false
-            stopRecommended = true
+            markActuationRisk()
             await bestEffortStop()
             throw WateringSafetyError.holdStartInvalidated
         }
@@ -160,24 +204,25 @@ public actor WateringCoordinator {
               acknowledgement.maximumRunMilliseconds == Self.expectedHoldMaximumRunMilliseconds else {
             holdStarting = false
             holdPressed = false
-            stopRecommended = true
+            markActuationRisk()
             await bestEffortStop()
             throw WateringSafetyError.ambiguousHoldStart
         }
 
         holdStarting = false
+        markActuationRisk()
         guard holdPressed else {
             await bestEffortStop()
-            return
+            throw WateringSafetyError.holdStartInvalidated
         }
         activeHoldRequestID = id
-        stopRecommended = true
         startHeartbeatLoop()
     }
 
     public func endHold(operationGeneration: Int) async throws {
         let hadHoldContext = holdPressed || holdStarting || activeHoldRequestID != nil
         invalidateHoldStarts(upTo: operationGeneration)
+        invalidateStatusObservations()
         holdPressed = false
         activeHoldRequestID = nil
         heartbeatTask?.cancel()
@@ -186,7 +231,11 @@ public actor WateringCoordinator {
         try await stop(operationGeneration: operationGeneration)
     }
 
-    public func reconcile(status: AtomStatus) {
+    public func reconcile(
+        status: AtomStatus,
+        observation: WateringStatusObservation
+    ) {
+        guard observation.revision == statusObservationRevision else { return }
         if status.pump {
             stopRecommended = true
         } else if status.state == .idle, !holdStarting, activeHoldRequestID == nil {
@@ -234,6 +283,7 @@ public actor WateringCoordinator {
             return true
         } catch {
             guard activeHoldRequestID == id else { return false }
+            invalidateStatusObservations()
             holdPressed = false
             activeHoldRequestID = nil
             heartbeatTask = nil
@@ -251,7 +301,23 @@ public actor WateringCoordinator {
         latestInvalidationGeneration = max(latestInvalidationGeneration, generation)
     }
 
-    private func isCurrentHoldStart(_ generation: Int) -> Bool {
-        return generation >= latestInvalidationGeneration
+    private func registerStartOperation(_ generation: Int) -> Bool {
+        guard generation >= latestInvalidationGeneration else { return false }
+        latestInvalidationGeneration = generation
+        return true
+    }
+
+    private func isCurrentStartOperation(_ generation: Int) -> Bool {
+        generation == latestInvalidationGeneration
+    }
+
+    private func invalidateStatusObservations() {
+        statusObservationRevision &+= 1
+    }
+
+    private func markActuationRisk() {
+        invalidateStatusObservations()
+        actuationRiskRevision &+= 1
+        stopRecommended = true
     }
 }

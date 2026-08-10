@@ -189,6 +189,12 @@ verification, retention, and shutdown.
   without changing the physical safety paths. Its no-auth behavior is not
   treated as physically verified until each flashed device returns status and
   dashboard responses without credentials while reporting the pump off.
+- Firmware v0.5.0 advertises `balcony-watering.local` as
+  `_tree-watering._tcp` and adds read-only API identity markers for the iOS
+  auto-discovery flow. The iOS flow was manually exercised with a local Bonjour
+  proxy and read-only mock on an iOS 26 simulator; CI preview screenshots do not
+  exercise runtime discovery. v0.5.0 remains physically unverified until it is
+  flashed to the ATOM and the boot-off, Bonjour, and status checks are repeated.
 - Measured flow, waterproofing, power endurance, drainage, siphon behavior, and
   the supervised pilot remain incomplete.
 - Automatic scheduling remains disabled by default.
