@@ -9,7 +9,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("http://192.168.1.50", text: $model.endpointInput)
+                    TextField("例：ATOMのLAN内IPアドレス", text: $model.endpointInput)
                         .font(.system(.body, design: .monospaced))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -46,9 +46,23 @@ struct SettingsView: View {
                         }
                     }
                     .fontWeight(.bold)
-                    .disabled(model.shouldShowStop)
+                    .disabled(!model.canAttemptEndpointChange)
                 }
             }
+        }
+        .alert("接続先を強制変更しますか？", isPresented: $model.showForceEndpointConfirmation) {
+            Button("キャンセル", role: .cancel) {
+                model.cancelOfflineEndpointChange()
+            }
+            Button("停止を確認して変更", role: .destructive) {
+                if model.confirmOfflineEndpointChange() {
+                    dismiss()
+                }
+            }
+        } message: {
+            Text(
+                "現在の端末へ停止確認できません。ポンプが停止していることを直接確認するか、電源を切ってから変更してください。"
+            )
         }
         .onAppear { endpointFocused = false }
         .presentationDetents([.medium, .large])

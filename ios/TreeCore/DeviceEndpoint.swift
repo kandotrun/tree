@@ -16,7 +16,7 @@ public struct DeviceEndpoint: Equatable, Sendable {
     public let baseURL: URL
 
     public init(_ value: String) throws {
-        guard var components = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+        guard let components = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = components.scheme?.lowercased(),
               let host = components.host?.lowercased(),
               !host.isEmpty else {
@@ -42,10 +42,16 @@ public struct DeviceEndpoint: Equatable, Sendable {
             throw DeviceEndpointError.nonLocalHost
         }
 
-        components.scheme = scheme
-        components.host = host
-        components.path = "/"
-        guard let normalized = components.url else {
+        var normalizedComponents = URLComponents()
+        normalizedComponents.scheme = scheme
+        if validationHost.contains(":") {
+            normalizedComponents.percentEncodedHost = "[\(validationHost)]"
+        } else {
+            normalizedComponents.host = validationHost
+        }
+        normalizedComponents.port = components.port
+        normalizedComponents.path = "/"
+        guard let normalized = normalizedComponents.url else {
             throw DeviceEndpointError.invalidURL
         }
         baseURL = normalized

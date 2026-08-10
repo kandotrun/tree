@@ -32,6 +32,7 @@ final class DeviceEndpointTests: XCTestCase {
             ("http://[::1]", "http://[::1]/"),
             ("http://[fd12:3456::1]", "http://[fd12:3456::1]/"),
             ("http://[fe80::1]", "http://[fe80::1]/"),
+            ("http://[fd12:3456::1]:8080", "http://[fd12:3456::1]:8080/"),
         ] {
             let endpoint = try DeviceEndpoint(value)
             XCTAssertEqual(endpoint.baseURL.absoluteString, expected)

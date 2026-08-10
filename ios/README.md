@@ -13,6 +13,9 @@ embedded installed-device address.
   retried automatically.
 - The stop control remains visible while the pump is reported active or an
   action result is ambiguous.
+- Endpoint changes are blocked during watering operations. If the old endpoint
+  is unreachable after an unconfirmed stop, switching requires explicit
+  confirmation that the pump is physically stopped or powered off.
 - Press-and-hold watering renews the firmware's 1,500 ms lease every 500 ms.
   Releasing the touch, backgrounding the app, a heartbeat error, or an
   ambiguous hold acknowledgement sends a best-effort stop. The firmware lease
@@ -47,7 +50,7 @@ python3 scripts/generate_icon.py
 
 Choose a Development Team in Xcode before installing on a physical iPhone. On
 first launch, enter the ATOM's current LAN address, such as
-`http://192.168.1.50`. The iPhone and ATOM must be on the same trusted Wi-Fi.
+`http://<ATOM_LAN_IP>`. The iPhone and ATOM must be on the same trusted Wi-Fi.
 The app requests iOS Local Network permission on the first connection.
 
 ## Test

@@ -137,18 +137,82 @@ class IOSAppStructureTests(unittest.TestCase):
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
             encoding="utf-8"
         )
-        save_endpoint = view_model[
-            view_model.index("func saveEndpoint()") : view_model.index("func activate()")
+        endpoint_change_guards = view_model[
+            view_model.index("var canAttemptEndpointChange") : view_model.index("func activate()")
         ]
         for state in [
             "isActionInFlight",
             "isStopping",
+            "holdGestureActive",
             "holdStartInFlight",
             "holdEndInFlight",
             "holdActive",
             "shouldShowStop",
         ]:
-            self.assertIn(state, save_endpoint)
+            self.assertIn(state, endpoint_change_guards)
+
+    def test_offline_endpoint_change_requires_physical_stop_confirmation(self) -> None:
+        view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        settings = (IOS_ROOT / "TreeWatering/Features/SettingsView.swift").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("showForceEndpointConfirmation", view_model)
+        self.assertIn("connectionState == .offline", view_model)
+        self.assertIn("confirmOfflineEndpointChange", view_model)
+        self.assertIn("canAttemptEndpointChange", settings)
+        self.assertIn("ポンプが停止していることを直接確認", settings)
+
+    def test_endpoint_change_invalidates_inflight_status_refresh(self) -> None:
+        view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        refresh = view_model[
+            view_model.index("private func refresh()") : view_model.index(
+                "private func performHoldEnd"
+            )
+        ]
+        install = view_model[
+            view_model.index("private func install") : view_model.index(
+                "private func startPolling"
+            )
+        ]
+        self.assertIn("endpointGeneration += 1", install)
+        self.assertIn("let generationAtStart = endpointGeneration", refresh)
+        self.assertIn("endpointGeneration == generationAtStart", refresh)
+        self.assertIn("activeRefreshGeneration", refresh)
+        self.assertIn(
+            "await coordinator?.reconcile(status: latest)\n"
+            "            guard endpointGeneration == generationAtStart else { return }\n"
+            "            await syncSafetyState()",
+            refresh,
+        )
+
+        sync_safety_state = view_model[
+            view_model.index("private func syncSafetyState") : view_model.index(
+                "private func endpointErrorMessage"
+            )
+        ]
+        self.assertIn("let generationAtStart = endpointGeneration", sync_safety_state)
+        self.assertIn(
+            "guard endpointGeneration == generationAtStart else { return }",
+            sync_safety_state,
+        )
+
+    def test_owned_url_session_is_invalidated_on_client_deinit(self) -> None:
+        client = (IOS_ROOT / "TreeCore/AtomAPIClient.swift").read_text(encoding="utf-8")
+        self.assertIn("private let ownsSession", client)
+        self.assertIn("ownsSession = false", client)
+        self.assertIn("ownsSession = true", client)
+        self.assertIn("if ownsSession", client)
+        self.assertIn("session.finishTasksAndInvalidate()", client)
+
+    def test_ipv6_url_normalization_uses_encoded_host(self) -> None:
+        endpoint = (IOS_ROOT / "TreeCore/DeviceEndpoint.swift").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("percentEncodedHost", endpoint)
 
     def test_setup_does_not_force_keyboard_on_first_launch(self) -> None:
         setup = (IOS_ROOT / "TreeWatering/Features/SetupView.swift").read_text(
@@ -184,13 +248,17 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn("gradient.resize", script)
 
     def test_repository_does_not_embed_installed_device_address(self) -> None:
-        committed_sources = (
+        runtime_sources = (
             [IOS_ROOT / "project.yml"]
             + sorted((IOS_ROOT / "TreeCore").rglob("*.swift"))
             + sorted((IOS_ROOT / "TreeWatering").rglob("*.swift"))
         )
+        committed_sources = [IOS_ROOT / "README.md"] + runtime_sources
         text = "\n".join(
             path.read_text(encoding="utf-8") for path in committed_sources
+        )
+        runtime_text = "\n".join(
+            path.read_text(encoding="utf-8") for path in runtime_sources
         )
 
         allowed_placeholders = {
@@ -200,7 +268,8 @@ class IOSAppStructureTests(unittest.TestCase):
             "169.254.0.0",
             "172.16.0.0",
             "192.168.0.0",
-            "192.168.1.50",
+            "fc00::",
+            "fe80::",
         }
         private_ipv4 = re.compile(
             r"\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"
@@ -208,10 +277,23 @@ class IOSAppStructureTests(unittest.TestCase):
             r"|\b169\.254\.\d{1,3}\.\d{1,3}\b"
             r"|\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b"
         )
-        found_addresses = set(private_ipv4.findall(text)) - allowed_placeholders
+        private_ipv6 = re.compile(
+            r"(?i)(?<![0-9a-f:])"
+            r"(?:f[cd][0-9a-f]{2}|fe[89ab][0-9a-f])"
+            r"(?::[0-9a-f]{0,4}){1,7}(?![0-9a-f:])"
+        )
+        self.assertEqual(
+            set(private_ipv6.findall("fd12:3456::99 fe80::abcd")),
+            {"fd12:3456::99", "fe80::abcd"},
+        )
+        found_addresses = (
+            set(private_ipv4.findall(text)) | set(private_ipv6.findall(text))
+        ) - allowed_placeholders
         self.assertEqual(found_addresses, set())
 
-        for host in re.findall(r"https?://([a-z0-9.-]+)", text, re.IGNORECASE):
+        for host in re.findall(
+            r"https?://([a-z0-9.-]+)", runtime_text, re.IGNORECASE
+        ):
             self.assertTrue(
                 host in allowed_placeholders or host.endswith(".local"),
                 f"public host embedded in iOS source: {host}",

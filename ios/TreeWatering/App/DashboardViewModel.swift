@@ -29,6 +29,7 @@ final class DashboardViewModel: ObservableObject {
     @Published var selectedDurationSeconds = 10
     @Published var showDoseConfirmation = false
     @Published var showSettings = false
+    @Published var showForceEndpointConfirmation = false
     @Published private(set) var endpointValidationMessage: String?
     @Published private(set) var status: AtomStatus?
     @Published private(set) var connectionState: DeviceConnectionState = .unconfigured
@@ -48,8 +49,11 @@ final class DashboardViewModel: ObservableObject {
     private var coordinator: WateringCoordinator?
     private var pollingTask: Task<Void, Never>?
     private var holdStartTask: Task<Void, Never>?
+    private var pendingEndpoint: DeviceEndpoint?
     private var isSceneActive = false
     private var holdOperationGeneration = 0
+    private var endpointGeneration = 0
+    private var activeRefreshGeneration: Int?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -113,30 +117,58 @@ final class DashboardViewModel: ObservableObject {
         stopRecommended || status?.pump == true || status?.state == .watering
     }
 
+    var canAttemptEndpointChange: Bool {
+        !isActionInFlight
+            && !isStopping
+            && !holdGestureActive
+            && !holdStartInFlight
+            && !holdEndInFlight
+            && !holdActive
+            && (!shouldShowStop || connectionState == .offline)
+    }
+
     func saveEndpoint() -> Bool {
-        guard !isActionInFlight,
-              !isStopping,
-              !holdGestureActive,
-              !holdStartInFlight,
-              !holdEndInFlight,
-              !holdActive,
-              !shouldShowStop else {
+        guard canAttemptEndpointChange else {
             endpointValidationMessage = "給水操作が完了してから接続先を変更してください"
             return false
         }
         do {
             let endpoint = try DeviceEndpoint(endpointInput)
-            let normalized = endpoint.baseURL.absoluteString
-            defaults.set(normalized, forKey: Self.endpointDefaultsKey)
-            endpointInput = normalized
-            endpointValidationMessage = nil
-            install(endpoint: endpoint)
-            activate()
-            return true
+            if shouldShowStop {
+                guard connectionState == .offline else {
+                    endpointValidationMessage = "停止を確認してから接続先を変更してください"
+                    return false
+                }
+                pendingEndpoint = endpoint
+                endpointValidationMessage = nil
+                showForceEndpointConfirmation = true
+                return false
+            }
+            return applyEndpoint(endpoint)
         } catch {
             endpointValidationMessage = endpointErrorMessage(error)
             return false
         }
+    }
+
+    func confirmOfflineEndpointChange() -> Bool {
+        defer {
+            pendingEndpoint = nil
+            showForceEndpointConfirmation = false
+        }
+        guard connectionState == .offline,
+              shouldShowStop,
+              canAttemptEndpointChange,
+              let endpoint = pendingEndpoint else {
+            endpointValidationMessage = "状態が変わりました。接続先をもう一度確認してください"
+            return false
+        }
+        return applyEndpoint(endpoint)
+    }
+
+    func cancelOfflineEndpointChange() {
+        pendingEndpoint = nil
+        showForceEndpointConfirmation = false
     }
 
     func activate() {
@@ -263,7 +295,22 @@ final class DashboardViewModel: ObservableObject {
         Task { await performHoldEnd(operationGeneration: operationGeneration) }
     }
 
+    private func applyEndpoint(_ endpoint: DeviceEndpoint) -> Bool {
+        let normalized = endpoint.baseURL.absoluteString
+        defaults.set(normalized, forKey: Self.endpointDefaultsKey)
+        endpointInput = normalized
+        endpointValidationMessage = nil
+        pendingEndpoint = nil
+        showForceEndpointConfirmation = false
+        install(endpoint: endpoint)
+        activate()
+        return true
+    }
+
     private func install(endpoint: DeviceEndpoint) {
+        endpointGeneration += 1
+        activeRefreshGeneration = nil
+        isRefreshing = false
         pollingTask?.cancel()
         let client = AtomAPIClient(endpoint: endpoint)
         api = client
@@ -291,16 +338,25 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func refresh() async {
-        guard !isRefreshing, let api else { return }
+        let generationAtStart = endpointGeneration
+        guard activeRefreshGeneration == nil, let api else { return }
+        activeRefreshGeneration = generationAtStart
         isRefreshing = true
         if status == nil {
             connectionState = .connecting
         }
-        defer { isRefreshing = false }
+        defer {
+            if activeRefreshGeneration == generationAtStart {
+                activeRefreshGeneration = nil
+                isRefreshing = false
+            }
+        }
 
         do {
             let latest = try await api.fetchStatus()
-            guard !Task.isCancelled && isSceneActive else { return }
+            guard endpointGeneration == generationAtStart,
+                  !Task.isCancelled,
+                  isSceneActive else { return }
             status = latest
             connectionState = .online
             if let normalized = WateringDurationPolicy.normalized(
@@ -310,11 +366,12 @@ final class DashboardViewModel: ObservableObject {
                 selectedDurationSeconds = normalized
             }
             await coordinator?.reconcile(status: latest)
+            guard endpointGeneration == generationAtStart else { return }
             await syncSafetyState()
         } catch is CancellationError {
             return
         } catch {
-            if isSceneActive {
+            if endpointGeneration == generationAtStart, isSceneActive {
                 connectionState = .offline
             }
         }
@@ -338,8 +395,10 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func syncSafetyState() async {
+        let generationAtStart = endpointGeneration
         guard let coordinator else { return }
         let snapshot = await coordinator.snapshot()
+        guard endpointGeneration == generationAtStart else { return }
         stopRecommended = snapshot.stopRecommended
         holdActive = snapshot.holdActive
     }

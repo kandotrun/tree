@@ -66,6 +66,18 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     }
 }
 
+private final class InvalidationTrackingURLSession: URLSession, @unchecked Sendable {
+    private(set) var finishTasksAndInvalidateCallCount = 0
+
+    init() {
+        super.init(configuration: .ephemeral, delegate: nil, delegateQueue: nil)
+    }
+
+    override func finishTasksAndInvalidate() {
+        finishTasksAndInvalidateCallCount += 1
+    }
+}
+
 final class AtomAPIClientTests: XCTestCase {
     private var session: URLSession!
     private var client: AtomAPIClient!
@@ -91,6 +103,21 @@ final class AtomAPIClientTests: XCTestCase {
         URLProtocolStub.handler = nil
         URLProtocolStub.requests = []
         URLProtocolStub.requestBodies = []
+    }
+
+    func testInjectedSessionRemainsCallerOwnedAfterClientDeinit() throws {
+        let injectedSession = InvalidationTrackingURLSession()
+        var injectedClient: AtomAPIClient? = AtomAPIClient(
+            endpoint: try DeviceEndpoint("http://192.168.1.50"),
+            session: injectedSession,
+            requestTimeout: 5
+        )
+        XCTAssertNotNil(injectedClient)
+
+        injectedClient = nil
+
+        XCTAssertEqual(injectedSession.finishTasksAndInvalidateCallCount, 0)
+        injectedSession.invalidateAndCancel()
     }
 
     func testFetchStatusUsesNoStoreGET() async throws {

@@ -106,6 +106,7 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
     private let session: URLSession
     private let requestTimeout: TimeInterval
     private let retainedSessionDelegate: NoRedirectURLSessionDelegate?
+    private let ownsSession: Bool
 
     public init(
         endpoint: DeviceEndpoint,
@@ -116,6 +117,7 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
         self.session = session
         self.requestTimeout = requestTimeout
         retainedSessionDelegate = nil
+        ownsSession = false
     }
 
     private init(
@@ -128,6 +130,7 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
         self.session = session
         self.requestTimeout = requestTimeout
         self.retainedSessionDelegate = retainedSessionDelegate
+        ownsSession = true
     }
 
     public convenience init(endpoint: DeviceEndpoint, requestTimeout: TimeInterval = 5) {
@@ -146,6 +149,12 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
             requestTimeout: requestTimeout,
             retainedSessionDelegate: delegate
         )
+    }
+
+    deinit {
+        if ownsSession {
+            session.finishTasksAndInvalidate()
+        }
     }
 
     public func fetchStatus() async throws -> AtomStatus {

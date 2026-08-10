@@ -43,7 +43,7 @@ struct SetupView: View {
                             .font(.subheadline.weight(.bold))
                             .foregroundStyle(Color.treeInk)
 
-                        TextField("http://192.168.1.50", text: $model.endpointInput)
+                        TextField("例：ATOMのLAN内IPアドレス", text: $model.endpointInput)
                             .font(.system(.body, design: .monospaced, weight: .medium))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
