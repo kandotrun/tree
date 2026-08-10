@@ -34,12 +34,6 @@ struct SetupView: View {
                         .foregroundStyle(Color.treeInk)
                         .padding(.top, 26)
 
-                    Text("同じWi-Fiの端末を探し、\n見つけたら自動で接続します。\nクラウドやアカウントは使いません。")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(Color.treeInk.opacity(0.68))
-                        .lineSpacing(5)
-                        .padding(.top, 12)
-
                     GlassEffectContainer(spacing: 14) {
                         VStack(spacing: 14) {
                             discoveryStatus
@@ -60,11 +54,6 @@ struct SetupView: View {
                     .padding(.top, 32)
 
                     manualSetup
-                        .padding(.top, 18)
-
-                    Label("検索はローカルネットワーク内だけで行います", systemImage: "wifi")
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(Color.treeInk.opacity(0.64))
                         .padding(.top, 18)
 
                     Spacer(minLength: 42)

@@ -76,6 +76,31 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn("guard api == nil", view_model)
         self.assertIn("startDiscovery()", view_model[view_model.index("func activate()") :])
 
+    def test_setup_omits_redundant_explanation_but_keeps_live_status(self) -> None:
+        setup = (IOS_ROOT / "TreeWatering/Features/SetupView.swift").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("同じWi-Fiの端末を探し、", setup)
+        self.assertNotIn("クラウドやアカウントは使いません", setup)
+        self.assertNotIn("検索はローカルネットワーク内だけで行います", setup)
+        self.assertIn("Text(model.discoveryMessage)", setup)
+
+    def test_watering_countdown_keeps_seconds_and_adds_progress_ring(self) -> None:
+        dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
+            encoding="utf-8"
+        )
+        status = dashboard[
+            dashboard.index("private struct StatusCard") : dashboard.index(
+                "private struct MetricTile"
+            )
+        ]
+
+        self.assertIn('Text("あと約 \\(max(1,', status)
+        self.assertIn("WateringCountdownProgress.remainingFraction", status)
+        self.assertIn(".trim(from: 0, to: remainingFraction)", status)
+        self.assertIn(".rotationEffect(.degrees(-90))", status)
+
     def test_discovery_validates_read_only_status_before_saving(self) -> None:
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
             encoding="utf-8"
