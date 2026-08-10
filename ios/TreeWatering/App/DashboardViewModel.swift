@@ -37,6 +37,7 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var isStopping = false
     @Published private(set) var holdGestureActive = false
     @Published private(set) var holdStartInFlight = false
+    @Published private(set) var holdEndInFlight = false
     @Published private(set) var holdActive = false
     @Published private(set) var stopRecommended = false
     @Published var notice: AppNotice?
@@ -46,8 +47,9 @@ final class DashboardViewModel: ObservableObject {
     private var api: AtomAPIClient?
     private var coordinator: WateringCoordinator?
     private var pollingTask: Task<Void, Never>?
-    private var holdEndInFlight = false
+    private var holdStartTask: Task<Void, Never>?
     private var isSceneActive = false
+    private var holdOperationGeneration = 0
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -89,9 +91,10 @@ final class DashboardViewModel: ObservableObject {
     }
 
     var durationOptions: [Int] {
-        let maximum = min(status?.maximumDurationSeconds ?? 180, 180)
-        let options = [5, 10, 30, 60, 120].filter { $0 <= maximum }
-        return options.isEmpty ? [max(1, maximum)] : options
+        WateringDurationPolicy.options(
+            maximumSeconds: status?.maximumDurationSeconds ?? 180,
+            including: selectedDurationSeconds
+        )
     }
 
     var canStartWatering: Bool {
@@ -100,7 +103,10 @@ final class DashboardViewModel: ObservableObject {
             && !isActionInFlight
             && !isStopping
             && !holdStartInFlight
+            && !holdEndInFlight
             && !holdActive
+            && !stopRecommended
+            && !durationOptions.isEmpty
     }
 
     var shouldShowStop: Bool {
@@ -108,8 +114,14 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func saveEndpoint() -> Bool {
-        guard !shouldShowStop else {
-            endpointValidationMessage = "給水を停止してから接続先を変更してください"
+        guard !isActionInFlight,
+              !isStopping,
+              !holdGestureActive,
+              !holdStartInFlight,
+              !holdEndInFlight,
+              !holdActive,
+              !shouldShowStop else {
+            endpointValidationMessage = "給水操作が完了してから接続先を変更してください"
             return false
         }
         do {
@@ -185,13 +197,17 @@ final class DashboardViewModel: ObservableObject {
 
     func stopNow() {
         guard !isStopping, let coordinator else { return }
+        holdOperationGeneration += 1
+        let generationAtStop = holdOperationGeneration
+        holdStartTask?.cancel()
+        holdStartTask = nil
         isStopping = true
         holdGestureActive = false
         notice = nil
         Task {
             defer { isStopping = false }
             do {
-                try await coordinator.stop()
+                try await coordinator.stop(operationGeneration: generationAtStop)
                 notice = AppNotice(level: .success, text: "停止を確認しました")
             } catch {
                 notice = AppNotice(
@@ -209,25 +225,42 @@ final class DashboardViewModel: ObservableObject {
         holdGestureActive = true
         holdStartInFlight = true
         notice = nil
+        let generationAtStart = holdOperationGeneration
 
-        Task {
-            do {
-                try await coordinator.beginHold()
-            } catch {
-                notice = AppNotice(level: .warning, text: actionErrorMessage(error))
+        holdStartTask = Task {
+            defer {
+                holdStartInFlight = false
+                holdStartTask = nil
             }
-            holdStartInFlight = false
+            guard holdOperationGeneration == generationAtStart, !isStopping else {
+                return
+            }
+            do {
+                try await coordinator.beginHold(operationGeneration: generationAtStart)
+            } catch {
+                if holdOperationGeneration == generationAtStart, !isStopping {
+                    notice = AppNotice(level: .warning, text: actionErrorMessage(error))
+                }
+            }
             await syncSafetyState()
-            if !holdGestureActive {
-                await performHoldEnd()
+            if holdOperationGeneration != generationAtStart {
+                return
+            }
+            if !holdGestureActive, !isStopping {
+                holdGestureEnded()
             }
         }
     }
 
     func holdGestureEnded() {
-        guard holdGestureActive || holdStartInFlight || holdActive else { return }
+        let shouldEndHold = holdGestureActive || holdStartInFlight || holdActive
         holdGestureActive = false
-        Task { await performHoldEnd() }
+        guard !isStopping, shouldEndHold, !holdEndInFlight else { return }
+        holdOperationGeneration += 1
+        let operationGeneration = holdOperationGeneration
+        holdStartTask?.cancel()
+        holdEndInFlight = true
+        Task { await performHoldEnd(operationGeneration: operationGeneration) }
     }
 
     private func install(endpoint: DeviceEndpoint) {
@@ -270,10 +303,12 @@ final class DashboardViewModel: ObservableObject {
             guard !Task.isCancelled && isSceneActive else { return }
             status = latest
             connectionState = .online
-            selectedDurationSeconds = min(
-                max(1, selectedDurationSeconds),
-                min(latest.maximumDurationSeconds, 180)
-            )
+            if let normalized = WateringDurationPolicy.normalized(
+                currentSeconds: selectedDurationSeconds,
+                maximumSeconds: latest.maximumDurationSeconds
+            ) {
+                selectedDurationSeconds = normalized
+            }
             await coordinator?.reconcile(status: latest)
             await syncSafetyState()
         } catch is CancellationError {
@@ -285,12 +320,11 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
-    private func performHoldEnd() async {
-        guard !holdEndInFlight, let coordinator else { return }
-        holdEndInFlight = true
+    private func performHoldEnd(operationGeneration: Int) async {
         defer { holdEndInFlight = false }
+        guard let coordinator else { return }
         do {
-            try await coordinator.endHold()
+            try await coordinator.endHold(operationGeneration: operationGeneration)
         } catch {
             notice = AppNotice(
                 level: .warning,
@@ -340,6 +374,8 @@ final class DashboardViewModel: ObservableObject {
             return "停止を確認できません。端末とポンプを直接確認してください"
         case .holdAlreadyActive:
             return "長押し給水はすでに開始処理中です"
+        case .holdStartInvalidated:
+            return "停止操作を優先し、長押し給水を開始しませんでした"
         }
     }
 

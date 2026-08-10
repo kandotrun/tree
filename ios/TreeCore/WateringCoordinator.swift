@@ -7,6 +7,7 @@ public enum WateringSafetyError: Error, Equatable, Sendable {
     case stopUnconfirmed
     case ambiguousHoldStart
     case holdAlreadyActive
+    case holdStartInvalidated
 }
 
 public struct WateringSnapshot: Equatable, Sendable {
@@ -16,6 +17,9 @@ public struct WateringSnapshot: Equatable, Sendable {
 }
 
 public actor WateringCoordinator {
+    private static let expectedHoldLeaseMilliseconds = 1_500
+    private static let expectedHoldMaximumRunMilliseconds = 600_000
+
     private let api: any AtomAPI
     private let requestID: @Sendable () -> String
     private let heartbeatIntervalNanoseconds: UInt64
@@ -24,6 +28,7 @@ public actor WateringCoordinator {
     private var holdPressed = false
     private var holdStarting = false
     private var activeHoldRequestID: String?
+    private var latestInvalidationGeneration = 0
     private var heartbeatTask: Task<Void, Never>?
 
     public init(
@@ -55,7 +60,8 @@ public actor WateringCoordinator {
         maximumDurationSeconds: Int
     ) async throws {
         let upperBound = min(180, maximumDurationSeconds)
-        guard (1 ... upperBound).contains(durationSeconds) else {
+        guard upperBound >= 1,
+              (1 ... upperBound).contains(durationSeconds) else {
             throw WateringSafetyError.invalidDuration
         }
 
@@ -87,16 +93,17 @@ public actor WateringCoordinator {
         stopRecommended = true
     }
 
-    public func stop() async throws {
+    public func stop(operationGeneration: Int? = nil) async throws {
+        invalidateHoldStarts(upTo: operationGeneration)
         holdPressed = false
-        holdStarting = false
         activeHoldRequestID = nil
         heartbeatTask?.cancel()
         heartbeatTask = nil
 
         do {
             let acknowledgement = try await api.stop()
-            guard acknowledgement.stopped else {
+            guard acknowledgement.stopped,
+                  acknowledgement.state == .idle else {
                 throw WateringSafetyError.stopUnconfirmed
             }
             stopRecommended = false
@@ -106,7 +113,10 @@ public actor WateringCoordinator {
         }
     }
 
-    public func beginHold() async throws {
+    public func beginHold(operationGeneration: Int? = nil) async throws {
+        guard isCurrentHoldStart(operationGeneration) else {
+            throw WateringSafetyError.holdStartInvalidated
+        }
         guard !holdStarting, activeHoldRequestID == nil else {
             throw WateringSafetyError.holdAlreadyActive
         }
@@ -134,12 +144,20 @@ public actor WateringCoordinator {
             throw WateringSafetyError.ambiguousHoldStart
         }
 
+        guard isCurrentHoldStart(operationGeneration) else {
+            holdStarting = false
+            holdPressed = false
+            stopRecommended = true
+            await bestEffortStop()
+            throw WateringSafetyError.holdStartInvalidated
+        }
+
         guard acknowledgement.accepted,
               acknowledgement.requestID == id,
               acknowledgement.state == .watering,
               acknowledgement.wateringMode == "HOLD",
-              acknowledgement.leaseMilliseconds == 1_500,
-              acknowledgement.maximumRunMilliseconds == 600_000 else {
+              acknowledgement.leaseMilliseconds == Self.expectedHoldLeaseMilliseconds,
+              acknowledgement.maximumRunMilliseconds == Self.expectedHoldMaximumRunMilliseconds else {
             holdStarting = false
             holdPressed = false
             stopRecommended = true
@@ -157,8 +175,9 @@ public actor WateringCoordinator {
         startHeartbeatLoop()
     }
 
-    public func endHold() async throws {
+    public func endHold(operationGeneration: Int? = nil) async throws {
         let hadHoldContext = holdPressed || holdStarting || activeHoldRequestID != nil
+        invalidateHoldStarts(upTo: operationGeneration)
         holdPressed = false
         activeHoldRequestID = nil
         heartbeatTask?.cancel()
@@ -209,11 +228,12 @@ public actor WateringCoordinator {
             let acknowledgement = try await api.renewHold(requestID: id)
             guard acknowledgement.renewed,
                   acknowledgement.requestID == id,
-                  acknowledgement.leaseMilliseconds == 1_500 else {
+                  acknowledgement.leaseMilliseconds == Self.expectedHoldLeaseMilliseconds else {
                 throw WateringSafetyError.ambiguousHoldStart
             }
             return true
         } catch {
+            guard activeHoldRequestID == id else { return false }
             holdPressed = false
             activeHoldRequestID = nil
             heartbeatTask = nil
@@ -225,5 +245,15 @@ public actor WateringCoordinator {
 
     private func bestEffortStop() async {
         _ = try? await api.stop()
+    }
+
+    private func invalidateHoldStarts(upTo generation: Int?) {
+        guard let generation else { return }
+        latestInvalidationGeneration = max(latestInvalidationGeneration, generation)
+    }
+
+    private func isCurrentHoldStart(_ generation: Int?) -> Bool {
+        guard let generation else { return true }
+        return generation >= latestInvalidationGeneration
     }
 }

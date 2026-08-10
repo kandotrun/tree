@@ -6,6 +6,21 @@ private enum APIStubError: Error {
     case transport
 }
 
+private final class RequestIDSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String]
+
+    init(_ values: [String]) {
+        self.values = values
+    }
+
+    func next() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return values.removeFirst()
+    }
+}
+
 private actor AtomAPIStub: AtomAPI {
     var statusResult: Result<AtomStatus, Error>
     var wateringResult: Result<WateringAcknowledgement, Error>
@@ -17,6 +32,10 @@ private actor AtomAPIStub: AtomAPI {
     private(set) var holdCalls: [String] = []
     private(set) var renewalCalls: [String] = []
     private(set) var stopCallCount = 0
+    private var suspendNextHold = false
+    private var holdContinuation: CheckedContinuation<HoldAcknowledgement, Error>?
+    private var suspendNextRenewal = false
+    private var renewalContinuation: CheckedContinuation<HoldRenewalAcknowledgement, Error>?
 
     init() {
         statusResult = .failure(APIStubError.transport)
@@ -38,11 +57,23 @@ private actor AtomAPIStub: AtomAPI {
 
     func startHold(requestID: String) async throws -> HoldAcknowledgement {
         holdCalls.append(requestID)
+        if suspendNextHold {
+            suspendNextHold = false
+            return try await withCheckedThrowingContinuation { continuation in
+                holdContinuation = continuation
+            }
+        }
         return try holdResult.get()
     }
 
     func renewHold(requestID: String) async throws -> HoldRenewalAcknowledgement {
         renewalCalls.append(requestID)
+        if suspendNextRenewal {
+            suspendNextRenewal = false
+            return try await withCheckedThrowingContinuation { continuation in
+                renewalContinuation = continuation
+            }
+        }
         return try renewalResult.get()
     }
 
@@ -65,6 +96,24 @@ private actor AtomAPIStub: AtomAPI {
 
     func setStopResult(_ result: Result<StopAcknowledgement, Error>) {
         stopResult = result
+    }
+
+    func suspendNextHoldCall() {
+        suspendNextHold = true
+    }
+
+    func succeedSuspendedHold(_ acknowledgement: HoldAcknowledgement) {
+        holdContinuation?.resume(returning: acknowledgement)
+        holdContinuation = nil
+    }
+
+    func suspendNextRenewalCall() {
+        suspendNextRenewal = true
+    }
+
+    func failSuspendedRenewal() {
+        renewalContinuation?.resume(throwing: APIStubError.transport)
+        renewalContinuation = nil
     }
 }
 
@@ -135,8 +184,38 @@ final class WateringCoordinatorTests: XCTestCase {
             }
         }
 
+        for maximum in [0, -1] {
+            do {
+                try await coordinator.startDose(
+                    durationSeconds: 1,
+                    maximumDurationSeconds: maximum
+                )
+                XCTFail("Expected invalid maximum duration")
+            } catch {
+                XCTAssertEqual(error as? WateringSafetyError, .invalidDuration)
+            }
+        }
+
         let wateringCallCount = await api.wateringCalls.count
         XCTAssertEqual(wateringCallCount, 0)
+    }
+
+    func testStopRequiresIdleAcknowledgement() async {
+        let api = AtomAPIStub()
+        await api.setStopResult(
+            .success(StopAcknowledgement(stopped: true, state: .watering))
+        )
+        let coordinator = WateringCoordinator(api: api)
+
+        do {
+            try await coordinator.stop()
+            XCTFail("Expected stopUnconfirmed")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .stopUnconfirmed)
+        }
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertTrue(snapshot.stopRecommended)
     }
 
     func testConfirmedStopClearsRecommendation() async throws {
@@ -172,6 +251,74 @@ final class WateringCoordinatorTests: XCTestCase {
         XCTAssertFalse(snapshot.holdActive)
     }
 
+    func testStopInvalidatesOlderHoldStartBeforeRequest() async throws {
+        let api = AtomAPIStub()
+        await api.setHoldResult(.success(Self.holdAck(requestID: "stale-hold")))
+        let coordinator = WateringCoordinator(api: api, requestID: { "stale-hold" })
+
+        try await coordinator.stop(operationGeneration: 1)
+
+        do {
+            try await coordinator.beginHold(operationGeneration: 0)
+            XCTFail("Expected stale hold start to be invalidated")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .holdStartInvalidated)
+        }
+
+        let holdCalls = await api.holdCalls
+        let stopCallCount = await api.stopCallCount
+        XCTAssertEqual(holdCalls, [])
+        XCTAssertEqual(stopCallCount, 1)
+    }
+
+    func testReleaseInvalidatesOlderHoldStartBeforeRequest() async throws {
+        let api = AtomAPIStub()
+        await api.setHoldResult(.success(Self.holdAck(requestID: "released-hold")))
+        let coordinator = WateringCoordinator(api: api, requestID: { "released-hold" })
+
+        try await coordinator.endHold(operationGeneration: 1)
+
+        do {
+            try await coordinator.beginHold(operationGeneration: 0)
+            XCTFail("Expected released hold start to be invalidated")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .holdStartInvalidated)
+        }
+
+        let holdCalls = await api.holdCalls
+        let stopCallCount = await api.stopCallCount
+        XCTAssertEqual(holdCalls, [])
+        XCTAssertEqual(stopCallCount, 0)
+    }
+
+    func testStopDuringHoldStartPreventsLateAcknowledgementFromWinning() async throws {
+        let api = AtomAPIStub()
+        await api.suspendNextHoldCall()
+        let coordinator = WateringCoordinator(api: api, requestID: { "pending-hold" })
+        let startTask = Task {
+            try await coordinator.beginHold(operationGeneration: 0)
+        }
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.holdCalls == ["pending-hold"]
+        }
+
+        try await coordinator.stop(operationGeneration: 1)
+        await api.succeedSuspendedHold(Self.holdAck(requestID: "pending-hold"))
+
+        do {
+            try await startTask.value
+            XCTFail("Expected late acknowledgement to be invalidated")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .holdStartInvalidated)
+        }
+
+        let snapshot = await coordinator.snapshot()
+        let stopCallCount = await api.stopCallCount
+        XCTAssertFalse(snapshot.holdActive)
+        XCTAssertTrue(snapshot.stopRecommended)
+        XCTAssertEqual(stopCallCount, 2)
+    }
+
     func testHeartbeatFailureStopsHold() async throws {
         let api = AtomAPIStub()
         await api.setHoldResult(
@@ -205,6 +352,49 @@ final class WateringCoordinatorTests: XCTestCase {
         XCTAssertTrue(snapshot.stopRecommended)
     }
 
+    func testStaleHeartbeatFailureDoesNotStopNewHold() async throws {
+        let api = AtomAPIStub()
+        let ids = RequestIDSequence(["hold-1", "hold-2"])
+        await api.setHoldResult(.success(Self.holdAck(requestID: "hold-1")))
+        await api.suspendNextRenewalCall()
+        let coordinator = WateringCoordinator(
+            api: api,
+            requestID: { ids.next() },
+            heartbeatIntervalNanoseconds: 50_000_000
+        )
+
+        try await coordinator.beginHold()
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.renewalCalls == ["hold-1"]
+        }
+        try await coordinator.endHold()
+
+        await api.setHoldResult(.success(Self.holdAck(requestID: "hold-2")))
+        await api.setRenewalResult(
+            .success(
+                HoldRenewalAcknowledgement(
+                    renewed: true,
+                    requestID: "hold-2",
+                    leaseMilliseconds: 1_500,
+                    remainingMilliseconds: 1_500
+                )
+            )
+        )
+        try await coordinator.beginHold()
+        await api.failSuspendedRenewal()
+        try await waitUntil(timeoutNanoseconds: 500_000_000) {
+            await api.renewalCalls.contains("hold-2")
+        }
+
+        let snapshot = await coordinator.snapshot()
+        let stopCallCount = await api.stopCallCount
+        XCTAssertTrue(snapshot.holdActive)
+        XCTAssertTrue(snapshot.stopRecommended)
+        XCTAssertEqual(stopCallCount, 1)
+
+        try await coordinator.endHold()
+    }
+
     private func waitUntil(
         timeoutNanoseconds: UInt64,
         condition: @escaping () async -> Bool
@@ -225,6 +415,17 @@ final class WateringCoordinatorTests: XCTestCase {
             requestID: requestID,
             state: .watering,
             scheduledMilliseconds: 10_000
+        )
+    }
+
+    private static func holdAck(requestID: String) -> HoldAcknowledgement {
+        HoldAcknowledgement(
+            accepted: true,
+            requestID: requestID,
+            state: .watering,
+            wateringMode: "HOLD",
+            leaseMilliseconds: 1_500,
+            maximumRunMilliseconds: 600_000
         )
     }
 }

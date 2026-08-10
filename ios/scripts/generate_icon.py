@@ -1,5 +1,6 @@
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFilter
+
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ICON = ROOT / "TreeWatering/Resources/Assets.xcassets/AppIcon.appiconset"
@@ -7,18 +8,22 @@ APP_ICON.mkdir(parents=True, exist_ok=True)
 
 SCALE = 4
 SIZE = 1024
-canvas = Image.new("RGB", (SIZE * SCALE, SIZE * SCALE), "#123e2b")
-pixels = canvas.load()
-center_x, center_y = SIZE * SCALE * 0.35, SIZE * SCALE * 0.20
-max_distance = (SIZE * SCALE * 1.15) ** 2
-for y in range(SIZE * SCALE):
-    for x in range(SIZE * SCALE):
+GRADIENT_SIZE = 256
+gradient = Image.new("RGB", (GRADIENT_SIZE, GRADIENT_SIZE), "#123e2b")
+pixels = gradient.load()
+center_x, center_y = GRADIENT_SIZE * 0.35, GRADIENT_SIZE * 0.20
+max_distance = (GRADIENT_SIZE * 1.15) ** 2
+for y in range(GRADIENT_SIZE):
+    for x in range(GRADIENT_SIZE):
         ratio = min(1.0, ((x - center_x) ** 2 + (y - center_y) ** 2) / max_distance)
         pixels[x, y] = (
             int(25 + 8 * ratio),
             int(78 - 18 * ratio),
             int(53 - 8 * ratio),
         )
+canvas = gradient.resize(
+    (SIZE * SCALE, SIZE * SCALE), Image.Resampling.BICUBIC
+)
 
 draw = ImageDraw.Draw(canvas, "RGBA")
 def box(values):

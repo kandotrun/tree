@@ -58,6 +58,11 @@ struct SetupView: View {
                                     .stroke(Color.treeInk.opacity(0.12), lineWidth: 1)
                             }
                             .onSubmit { connect() }
+                            .accessibilityLabel("端末アドレス")
+                            .accessibilityHint(
+                                model.endpointValidationMessage
+                                    ?? "LAN内の端末アドレスを入力してください"
+                            )
 
                         if let message = model.endpointValidationMessage {
                             Label(message, systemImage: "exclamationmark.circle.fill")

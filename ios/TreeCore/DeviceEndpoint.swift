@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum DeviceEndpointError: Error, Equatable, Sendable {
     case invalidURL
@@ -27,7 +32,13 @@ public struct DeviceEndpoint: Equatable, Sendable {
               components.path.isEmpty || components.path == "/" else {
             throw DeviceEndpointError.unexpectedComponents
         }
-        guard Self.isLocalHost(host) else {
+        let validationHost: String
+        if host.hasPrefix("["), host.hasSuffix("]") {
+            validationHost = String(host.dropFirst().dropLast())
+        } else {
+            validationHost = host
+        }
+        guard Self.isLocalHost(validationHost) else {
             throw DeviceEndpointError.nonLocalHost
         }
 
@@ -50,6 +61,11 @@ public struct DeviceEndpoint: Equatable, Sendable {
         }
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
         if parts.count == 4 {
+            guard parts.allSatisfy({ part in
+                !part.isEmpty
+                    && (part.count == 1 || part.first != "0")
+                    && part.utf8.allSatisfy { byte in byte >= 48 && byte <= 57 }
+            }) else { return false }
             let parsed = parts.map { UInt8($0) }
             guard parsed.allSatisfy({ $0 != nil }) else { return false }
             let octets = parsed.compactMap { $0 }
@@ -62,16 +78,26 @@ public struct DeviceEndpoint: Equatable, Sendable {
                 return false
             }
         }
-        let lowercase = host.lowercased()
-        guard lowercase.contains(":"),
-              lowercase.allSatisfy({ $0.isHexDigit || $0 == ":" }) else {
-            return false
+        return host.contains(":") && isLocalIPv6(host)
+    }
+
+    private static func isLocalIPv6(_ host: String) -> Bool {
+#if canImport(Darwin) || canImport(Glibc)
+        var address = in6_addr()
+        let parsed = host.withCString { pointer in
+            inet_pton(AF_INET6, pointer, &address)
         }
-        return lowercase.hasPrefix("fc")
-            || lowercase.hasPrefix("fd")
-            || lowercase.hasPrefix("fe8")
-            || lowercase.hasPrefix("fe9")
-            || lowercase.hasPrefix("fea")
-            || lowercase.hasPrefix("feb")
+        guard parsed == 1 else { return false }
+
+        let bytes = withUnsafeBytes(of: &address) { Array($0) }
+        guard bytes.count == 16 else { return false }
+        let isLoopback = bytes.dropLast().allSatisfy { $0 == 0 }
+            && bytes.last == 1
+        let isUniqueLocal = (bytes[0] & 0xfe) == 0xfc
+        let isLinkLocal = bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80
+        return isLoopback || isUniqueLocal || isLinkLocal
+#else
+        return false
+#endif
     }
 }

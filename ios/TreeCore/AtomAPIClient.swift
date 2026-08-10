@@ -196,8 +196,8 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
         method: String,
         response: Response.Type
     ) async throws -> Response {
-        var request = makeRequest(path: path, method: method)
-        return try await perform(request: &request, response: response)
+        let request = makeRequest(path: path, method: method)
+        return try await perform(request: request, response: response)
     }
 
     private func send<Payload: Encodable, Response: Decodable>(
@@ -209,7 +209,7 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
         var request = makeRequest(path: path, method: method)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(payload)
-        return try await perform(request: &request, response: response)
+        return try await perform(request: request, response: response)
     }
 
     private func makeRequest(path: String, method: String) -> URLRequest {
@@ -220,12 +220,14 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
         )
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // The ATOM server prefers one request per socket; URLSession may still manage
+        // this reserved header according to its own connection policy.
         request.setValue("close", forHTTPHeaderField: "Connection")
         return request
     }
 
     private func perform<Response: Decodable>(
-        request: inout URLRequest,
+        request: URLRequest,
         response: Response.Type
     ) async throws -> Response {
         let (data, urlResponse) = try await session.data(for: request)

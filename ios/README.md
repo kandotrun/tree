@@ -22,7 +22,7 @@ embedded installed-device address.
 
 ## Requirements
 
-- Xcode 15 or later
+- Xcode 15.3 or later
 - iOS 17 or later
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 
@@ -32,6 +32,17 @@ embedded installed-device address.
 brew install xcodegen
 xcodegen generate --spec ios/project.yml
 open ios/TreeWatering.xcodeproj
+```
+
+The generated app icons under `TreeWatering/Resources/Assets.xcassets` are
+committed, so normal builds do not require Pillow or the generator script.
+To regenerate the icons from the `ios/` directory:
+
+```bash
+python3 -m venv .venv-icon
+source .venv-icon/bin/activate
+python3 -m pip install -r scripts/requirements.txt
+python3 scripts/generate_icon.py
 ```
 
 Choose a Development Team in Xcode before installing on a physical iPhone. On
