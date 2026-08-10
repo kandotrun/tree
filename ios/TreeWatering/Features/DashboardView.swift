@@ -112,7 +112,13 @@ private struct StatusCard: View {
                 StatusOrb(
                     state: model.status?.state,
                     isOnline: model.isOnline,
-                    isRefreshing: model.isRefreshing
+                    isRefreshing: model.isRefreshing,
+                    remainingFraction: model.status.flatMap { status in
+                        WateringCountdownProgress.remainingFraction(
+                            remainingMilliseconds: status.remainingMilliseconds,
+                            scheduledMilliseconds: status.scheduledMilliseconds
+                        )
+                    }
                 )
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -174,6 +180,7 @@ private struct StatusOrb: View {
     let state: AtomState?
     let isOnline: Bool
     let isRefreshing: Bool
+    let remainingFraction: Double?
 
     var tint: Color {
         guard isOnline else { return Color.treeInk.opacity(0.28) }
@@ -184,9 +191,24 @@ private struct StatusOrb: View {
         ZStack {
             Circle()
                 .fill(tint.opacity(0.12))
-            Circle()
-                .stroke(tint.opacity(0.20), lineWidth: 6)
-                .padding(5)
+            if state == .watering, let remainingFraction {
+                Circle()
+                    .stroke(tint.opacity(0.16), lineWidth: 7)
+                    .padding(5)
+                Circle()
+                    .trim(from: 0, to: remainingFraction)
+                    .stroke(
+                        tint,
+                        style: StrokeStyle(lineWidth: 7, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .padding(5)
+                    .animation(.linear(duration: 0.25), value: remainingFraction)
+            } else {
+                Circle()
+                    .stroke(tint.opacity(0.20), lineWidth: 6)
+                    .padding(5)
+            }
             Image(systemName: state == .watering ? "drop.fill" : "leaf.fill")
                 .font(.system(size: 32, weight: .bold))
                 .foregroundStyle(tint)
@@ -196,6 +218,7 @@ private struct StatusOrb: View {
                     .trim(from: 0.02, to: 0.24)
                     .stroke(tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .rotationEffect(.degrees(-90))
+                    .padding(15)
             }
         }
         .frame(width: 94, height: 94)
