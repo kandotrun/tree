@@ -234,6 +234,15 @@ class IOSAppStructureTests(unittest.TestCase):
             )
         )
 
+    def test_endpoint_input_placeholders_include_required_scheme(self) -> None:
+        placeholder = 'TextField("例：http://<ATOMのLAN内IP>", text: $model.endpointInput)'
+        for relative_path in [
+            "TreeWatering/Features/SetupView.swift",
+            "TreeWatering/Features/SettingsView.swift",
+        ]:
+            source = (IOS_ROOT / relative_path).read_text(encoding="utf-8")
+            self.assertIn(placeholder, source)
+
     def test_icon_regeneration_dependency_and_command_are_documented(self) -> None:
         requirements = IOS_ROOT / "scripts/requirements.txt"
         self.assertTrue(requirements.is_file())

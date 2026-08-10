@@ -9,7 +9,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("例：ATOMのLAN内IPアドレス", text: $model.endpointInput)
+                    TextField("例：http://<ATOMのLAN内IP>", text: $model.endpointInput)
                         .font(.system(.body, design: .monospaced))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
