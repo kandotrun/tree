@@ -66,24 +66,6 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     }
 }
 
-private final class InvalidationTrackingURLSession: URLSession, @unchecked Sendable {
-    private(set) var finishTasksAndInvalidateCallCount = 0
-
-    #if canImport(Darwin)
-    override init() {
-        super.init()
-    }
-    #else
-    init() {
-        super.init(configuration: .ephemeral, delegate: nil, delegateQueue: nil)
-    }
-    #endif
-
-    override func finishTasksAndInvalidate() {
-        finishTasksAndInvalidateCallCount += 1
-    }
-}
-
 final class AtomAPIClientTests: XCTestCase {
     private var session: URLSession!
     private var client: AtomAPIClient!
@@ -111,8 +93,10 @@ final class AtomAPIClientTests: XCTestCase {
         URLProtocolStub.requestBodies = []
     }
 
-    func testInjectedSessionRemainsCallerOwnedAfterClientDeinit() throws {
-        let injectedSession = InvalidationTrackingURLSession()
+    func testInjectedSessionRemainsCallerOwnedAfterClientDeinit() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let injectedSession = URLSession(configuration: configuration)
         var injectedClient: AtomAPIClient? = AtomAPIClient(
             endpoint: try DeviceEndpoint("http://192.168.1.50"),
             session: injectedSession,
@@ -122,7 +106,15 @@ final class AtomAPIClientTests: XCTestCase {
 
         injectedClient = nil
 
-        XCTAssertEqual(injectedSession.finishTasksAndInvalidateCallCount, 0)
+        URLProtocolStub.handler = { _ in
+            .response(status: 200, body: Data("still-owned".utf8))
+        }
+        let (data, response) = try await injectedSession.data(
+            from: URL(string: "http://192.168.1.50/ownership-probe")!
+        )
+
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "still-owned")
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
         injectedSession.invalidateAndCancel()
     }
 
