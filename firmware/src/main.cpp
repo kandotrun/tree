@@ -624,11 +624,11 @@ void setup() {
 
   if (network_config_valid) {
     connect_wifi_initially();
+    configure_http_server();
+    start_discovery_service();
   } else {
     Serial.println("Wi-Fi disabled because configuration is invalid");
   }
-  configure_http_server();
-  start_discovery_service();
   sample_moisture(millis());
 
   const esp_err_t watchdog_init =
@@ -661,7 +661,9 @@ void loop() {
   sample_moisture(now);
   update_led(now);
 
-  server.handleClient();
+  if (network_config_valid) {
+    server.handleClient();
+  }
 
   // Re-check after handling a request so stop/timer outputs are applied in the
   // same loop iteration even if the request handler consumed measurable time.
