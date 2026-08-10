@@ -103,7 +103,7 @@ public actor WateringCoordinator {
         } catch let error as WateringSafetyError {
             throw error
         } catch let error as AtomAPIError {
-            if case let .http(_, code) = error {
+            if let code = definitiveStartRejectionCode(error) {
                 throw WateringSafetyError.rejected(code)
             }
             markActuationRisk()
@@ -174,7 +174,7 @@ public actor WateringCoordinator {
         } catch let error as AtomAPIError {
             holdStarting = false
             holdPressed = false
-            if case let .http(_, code) = error {
+            if let code = definitiveStartRejectionCode(error) {
                 throw WateringSafetyError.rejected(code)
             }
             markActuationRisk()
@@ -309,6 +309,25 @@ public actor WateringCoordinator {
 
     private func isCurrentStartOperation(_ generation: Int) -> Bool {
         generation == latestInvalidationGeneration
+    }
+
+    private func definitiveStartRejectionCode(_ error: AtomAPIError) -> String? {
+        guard case let .http(status, code) = error else { return nil }
+        // These exact firmware responses are emitted before the physical HIGH
+        // transition. Busy/duplicate, 5xx, and unknown responses stay ambiguous.
+        switch (status, code) {
+        case (400, "invalid_request_body"),
+             (413, "invalid_request_body"),
+             (400, "invalid_request_id"),
+             (400, "invalid_duration_sec"),
+             (423, "boot_guard"),
+             (423, "error"),
+             (423, "not_armed"),
+             (429, "cooldown"):
+            return code
+        default:
+            return nil
+        }
     }
 
     private func invalidateStatusObservations() {

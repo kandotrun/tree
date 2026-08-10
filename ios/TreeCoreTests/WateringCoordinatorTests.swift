@@ -354,7 +354,7 @@ final class WateringCoordinatorTests: XCTestCase {
 
     func testDefinitiveFirmwareRejectionDoesNotRecommendStop() async {
         let api = AtomAPIStub()
-        await api.setWateringResult(.failure(AtomAPIError.http(status: 409, code: "boot_guard")))
+        await api.setWateringResult(.failure(AtomAPIError.http(status: 423, code: "boot_guard")))
         let coordinator = WateringCoordinator(api: api, requestID: { "ios-rejected" })
 
         do {
@@ -366,6 +366,60 @@ final class WateringCoordinatorTests: XCTestCase {
 
         let snapshot = await coordinator.snapshot()
         XCTAssertFalse(snapshot.stopRecommended)
+    }
+
+    func testServerErrorDoseIsAmbiguousAndRecommendsStop() async {
+        let api = AtomAPIStub()
+        await api.setWateringResult(
+            .failure(AtomAPIError.http(status: 500, code: "http_error"))
+        )
+        let coordinator = WateringCoordinator(api: api, requestID: { "ios-server-error" })
+
+        do {
+            try await coordinator.startDose(durationSeconds: 10, maximumDurationSeconds: 180)
+            XCTFail("Expected ambiguous result")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .ambiguousStart)
+        }
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertTrue(snapshot.stopRecommended)
+    }
+
+    func testBusyDoseIsAmbiguousBecausePumpMayAlreadyBeRunning() async {
+        let api = AtomAPIStub()
+        await api.setWateringResult(.failure(AtomAPIError.http(status: 409, code: "busy")))
+        let coordinator = WateringCoordinator(api: api, requestID: { "ios-busy" })
+
+        do {
+            try await coordinator.startDose(durationSeconds: 10, maximumDurationSeconds: 180)
+            XCTFail("Expected ambiguous result")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .ambiguousStart)
+        }
+
+        let snapshot = await coordinator.snapshot()
+        XCTAssertTrue(snapshot.stopRecommended)
+    }
+
+    func testServerErrorHoldIsAmbiguousAndSendsBestEffortStop() async {
+        let api = AtomAPIStub()
+        await api.setHoldResult(
+            .failure(AtomAPIError.http(status: 500, code: "http_error"))
+        )
+        let coordinator = WateringCoordinator(api: api, requestID: { "ios-hold-server-error" })
+
+        do {
+            try await coordinator.beginHold(operationGeneration: 1)
+            XCTFail("Expected ambiguous hold result")
+        } catch {
+            XCTAssertEqual(error as? WateringSafetyError, .ambiguousHoldStart)
+        }
+
+        let snapshot = await coordinator.snapshot()
+        let stopCallCount = await api.stopCallCount
+        XCTAssertTrue(snapshot.stopRecommended)
+        XCTAssertEqual(stopCallCount, 1)
     }
 
     func testInvalidDurationNeverReachesDevice() async {
