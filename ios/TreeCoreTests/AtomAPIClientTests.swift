@@ -69,9 +69,15 @@ final class URLProtocolStub: URLProtocol, @unchecked Sendable {
 private final class InvalidationTrackingURLSession: URLSession, @unchecked Sendable {
     private(set) var finishTasksAndInvalidateCallCount = 0
 
+    #if canImport(Darwin)
+    override init() {
+        super.init()
+    }
+    #else
     init() {
         super.init(configuration: .ephemeral, delegate: nil, delegateQueue: nil)
     }
+    #endif
 
     override func finishTasksAndInvalidate() {
         finishTasksAndInvalidateCallCount += 1
