@@ -93,7 +93,7 @@ public actor WateringCoordinator {
         stopRecommended = true
     }
 
-    public func stop(operationGeneration: Int? = nil) async throws {
+    public func stop(operationGeneration: Int) async throws {
         invalidateHoldStarts(upTo: operationGeneration)
         holdPressed = false
         activeHoldRequestID = nil
@@ -113,7 +113,7 @@ public actor WateringCoordinator {
         }
     }
 
-    public func beginHold(operationGeneration: Int? = nil) async throws {
+    public func beginHold(operationGeneration: Int) async throws {
         guard isCurrentHoldStart(operationGeneration) else {
             throw WateringSafetyError.holdStartInvalidated
         }
@@ -175,7 +175,7 @@ public actor WateringCoordinator {
         startHeartbeatLoop()
     }
 
-    public func endHold(operationGeneration: Int? = nil) async throws {
+    public func endHold(operationGeneration: Int) async throws {
         let hadHoldContext = holdPressed || holdStarting || activeHoldRequestID != nil
         invalidateHoldStarts(upTo: operationGeneration)
         holdPressed = false
@@ -183,7 +183,7 @@ public actor WateringCoordinator {
         heartbeatTask?.cancel()
         heartbeatTask = nil
         guard hadHoldContext else { return }
-        try await stop()
+        try await stop(operationGeneration: operationGeneration)
     }
 
     public func reconcile(status: AtomStatus) {
@@ -247,13 +247,11 @@ public actor WateringCoordinator {
         _ = try? await api.stop()
     }
 
-    private func invalidateHoldStarts(upTo generation: Int?) {
-        guard let generation else { return }
+    private func invalidateHoldStarts(upTo generation: Int) {
         latestInvalidationGeneration = max(latestInvalidationGeneration, generation)
     }
 
-    private func isCurrentHoldStart(_ generation: Int?) -> Bool {
-        guard let generation else { return true }
+    private func isCurrentHoldStart(_ generation: Int) -> Bool {
         return generation >= latestInvalidationGeneration
     }
 }

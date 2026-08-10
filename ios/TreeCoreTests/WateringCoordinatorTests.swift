@@ -208,7 +208,7 @@ final class WateringCoordinatorTests: XCTestCase {
         let coordinator = WateringCoordinator(api: api)
 
         do {
-            try await coordinator.stop()
+            try await coordinator.stop(operationGeneration: 0)
             XCTFail("Expected stopUnconfirmed")
         } catch {
             XCTAssertEqual(error as? WateringSafetyError, .stopUnconfirmed)
@@ -224,7 +224,7 @@ final class WateringCoordinatorTests: XCTestCase {
         let coordinator = WateringCoordinator(api: api, requestID: { "ios-stop" })
         try await coordinator.startDose(durationSeconds: 10, maximumDurationSeconds: 180)
 
-        try await coordinator.stop()
+        try await coordinator.stop(operationGeneration: 0)
 
         let stopCallCount = await api.stopCallCount
         let snapshot = await coordinator.snapshot()
@@ -237,7 +237,7 @@ final class WateringCoordinatorTests: XCTestCase {
         let coordinator = WateringCoordinator(api: api, requestID: { "ios-hold" })
 
         do {
-            try await coordinator.beginHold()
+            try await coordinator.beginHold(operationGeneration: 0)
             XCTFail("Expected ambiguous hold")
         } catch {
             XCTAssertEqual(error as? WateringSafetyError, .ambiguousHoldStart)
@@ -340,7 +340,7 @@ final class WateringCoordinatorTests: XCTestCase {
             heartbeatIntervalNanoseconds: 10_000_000
         )
 
-        try await coordinator.beginHold()
+        try await coordinator.beginHold(operationGeneration: 0)
         try await waitUntil(timeoutNanoseconds: 500_000_000) {
             await api.stopCallCount == 1
         }
@@ -363,11 +363,11 @@ final class WateringCoordinatorTests: XCTestCase {
             heartbeatIntervalNanoseconds: 50_000_000
         )
 
-        try await coordinator.beginHold()
+        try await coordinator.beginHold(operationGeneration: 0)
         try await waitUntil(timeoutNanoseconds: 500_000_000) {
             await api.renewalCalls == ["hold-1"]
         }
-        try await coordinator.endHold()
+        try await coordinator.endHold(operationGeneration: 1)
 
         await api.setHoldResult(.success(Self.holdAck(requestID: "hold-2")))
         await api.setRenewalResult(
@@ -380,7 +380,7 @@ final class WateringCoordinatorTests: XCTestCase {
                 )
             )
         )
-        try await coordinator.beginHold()
+        try await coordinator.beginHold(operationGeneration: 1)
         await api.failSuspendedRenewal()
         try await waitUntil(timeoutNanoseconds: 500_000_000) {
             await api.renewalCalls.contains("hold-2")
@@ -392,7 +392,7 @@ final class WateringCoordinatorTests: XCTestCase {
         XCTAssertTrue(snapshot.stopRecommended)
         XCTAssertEqual(stopCallCount, 1)
 
-        try await coordinator.endHold()
+        try await coordinator.endHold(operationGeneration: 2)
     }
 
     private func waitUntil(
