@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 from typing import Final
 
-
 IOS_ROOT: Final = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT: Final = IOS_ROOT.parent
 
