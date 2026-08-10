@@ -110,3 +110,29 @@ def test_hold_keepalive_has_no_persistence_or_start_path() -> None:
     assert "preferences.putString" not in handler
     assert "controller->start_hold" not in handler
     assert "pump_safety_gate.arm()" not in handler
+
+
+def test_invalid_wifi_configuration_never_enters_the_tcpip_stack() -> None:
+    source = MAIN.read_text(encoding="utf-8")
+    setup_start = source.index("void setup()")
+    loop_start = source.index("void loop()", setup_start)
+    setup = source[setup_start:loop_start]
+    loop = source[loop_start:]
+
+    guarded_startup = """if (network_config_valid) {
+    connect_wifi_initially();
+    configure_http_server();
+    start_discovery_service();
+  } else {
+    Serial.println(\"Wi-Fi disabled because configuration is invalid\");
+  }"""
+    guarded_requests = """if (network_config_valid) {
+    server.handleClient();
+  }"""
+
+    assert guarded_startup in setup
+    assert guarded_requests in loop
+    assert setup.count("connect_wifi_initially();") == 1
+    assert setup.count("configure_http_server();") == 1
+    assert setup.count("start_discovery_service();") == 1
+    assert loop.count("server.handleClient();") == 1
