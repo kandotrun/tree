@@ -65,6 +65,7 @@ public struct AtomStatus: Codable, Equatable, Sendable {
     public let lastRuntimeMilliseconds: Int
     public let lastStopReason: String
     public let firmwareVersion: String
+    public let otaSupported: Bool?
     public let errorReason: String?
 
     public var wateringAvailability: WateringAvailability {
@@ -123,6 +124,7 @@ public struct AtomStatus: Codable, Equatable, Sendable {
         case lastRuntimeMilliseconds = "last_runtime_ms"
         case lastStopReason = "last_stop_reason"
         case firmwareVersion = "firmware_version"
+        case otaSupported = "ota_supported"
         case errorReason = "error_reason"
     }
 }

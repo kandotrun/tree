@@ -63,10 +63,10 @@ jobs:
           if match is None:
               raise SystemExit("tag must use firmware-vx.y.z")
           version = match.group(1)
-          config = Path("firmware/include/config.h").read_text(encoding="utf-8")
-          expected = f'#define FIRMWARE_VERSION "{version}"'
-          if expected not in config:
-              raise SystemExit(f"tag {tag} does not match config firmware version")
+          identity = Path("firmware/include/firmware_identity.h").read_text(encoding="utf-8")
+          expected = f'#define TREE_FIRMWARE_VERSION "{version}"'
+          if expected not in identity:
+              raise SystemExit(f"tag {tag} does not match checked-in firmware identity")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
               output.write(f"version={version}\n")
           PY

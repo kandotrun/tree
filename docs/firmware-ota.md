@@ -9,6 +9,21 @@
 USB導入後は、Wi-Fi設定と給水の安全設定をNVSに保持します。
 公開releaseのgeneric firmwareには、実環境のWi-Fi情報や更新鍵を含めません。
 
+初回導入とpairingが完了した後、通常のfirmware更新にMacやUSBデータ接続は不要です。
+更新時に必要なのは安定した電源であり、検証済みのsolar/battery、USB充電器、power bankを使えます。
+
+Mac接続を1回で終える場合、その接続は次をすべて完了するまで維持します。
+
+1. `WATERING_ARMED=false`、`PROVISIONING_REVISION=1`でOTA対応版をUSB導入する。
+2. 未アーム拒否と10回の電源試験で、意図しないpump出力がないことを確認する。
+3. 吐出口を計量容器へ固定してから`WATERING_ARMED=true`、`PROVISIONING_REVISION=2`で候補版をUSB導入する。
+4. 10秒×3回の流量、漏水、排水、siphonを実機確認する。失敗時は停止し、接続中にrevisionを上げて`WATERING_ARMED=false`へ戻す。
+5. 合格時だけstatusの`armed=true`、`pump=false`、保存済みfirmware versionをread-backする。
+6. ATOM buttonを3秒押し、iPhoneとOTA pairingして鍵をKeychainへ保存する。
+
+手順5より前にMacから外すと、安全設定を確定するために再接続が必要です。
+配管を木へ設置してから確認する場合は、最終確認が終わるまでMacとのUSBデータ接続を残します。
+
 OTAは給水設定を変更する経路ではありません。
 `armed`、最大給水時間、dose、cooldownを変える場合は、別のcommissioning作業として扱います。
 
@@ -35,7 +50,7 @@ pairing response自体はLAN内HTTPを通るため、共有Wi-Fi、guest network
 ## 更新手順
 
 1. ポンプが停止し、吐出口と周辺に漏水リスクがないことを確認する。
-2. ATOMをUSBなどの安定した電源へ接続する。
+2. ATOMを検証済みのsolar/battery、USB充電器、power bankなどの安定した電源へ接続する。Macへの接続は不要。
 3. 未pairingの場合は、ATOM本体buttonを3秒間押してから、アプリで「更新アクセスをペアリング」を実行する。
 4. アプリで「更新を確認」を実行する。
 5. 現在版と更新先、電源、pump停止状態を確認し、破壊的操作の確認画面から更新を開始する。
@@ -63,12 +78,15 @@ boot partition切り替え後にHTTP responseが失われた場合、アプリ�
 更新後はboot guardが再び有効になります。
 boot guard中に給水確認を進めません。
 
-ATOMが再接続しない場合は、電源を切ってポンプと水源を安全な状態にし、USB recoveryへ戻ります。
+更新後はWi-Fi、watchdog、controller、pump GPIOを検査します。
+15秒のhealth window後も不健康な場合は、pumpを`LOW`へ固定して旧partitionへ自動rollbackし、再起動します。
+
+新旧両partitionが起動できない、またはrollback自体に失敗した場合だけ、ポンプと水源を安全な状態にしてUSB recoveryへ戻ります。
 
 ## Release作成
 
 firmware releaseは`firmware-vx.y.z` tagで作成します。
-tag versionと`config.example.h`の`FIRMWARE_VERSION`が一致しない場合、workflowは停止します。
+tag versionと`firmware/include/firmware_identity.h`の`TREE_FIRMWARE_VERSION`が一致しない場合、workflowは停止します。
 
 workflowは`config.example.h`を`config.h`へコピーし、次の安全値を検証してからbuildします。
 

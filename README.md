@@ -122,8 +122,11 @@ python3 firmware/scripts/generate_dashboard_header.py --check
 The native SwiftUI app connects directly to the ATOM on the same Wi-Fi. It
 provides live status, bounded confirmed doses, leased press-and-hold watering,
 emergency stop, and explicitly confirmed firmware updates without a cloud
-service or login. The installed device
-address is entered and stored on the iPhone; it is not committed to this repo.
+service or login. Firmware 0.5.x needs one initial Mac/USB flash to install
+the OTA receiver; after that, routine updates preserve NVS settings and need no
+Mac or USB data connection. Stable power is still required during an update.
+The installed device address is entered and stored on the iPhone; it is not
+committed to this repo.
 
 ```bash
 brew install xcodegen

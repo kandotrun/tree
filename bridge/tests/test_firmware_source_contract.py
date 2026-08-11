@@ -26,12 +26,13 @@ def _handler_source(source: str, name: str, next_name: str) -> str:
     return source[start:end]
 
 
-def test_http_api_has_no_application_authentication() -> None:
+def test_watering_api_has_no_application_authentication() -> None:
     source = MAIN.read_text(encoding="utf-8")
     config = CONFIG_EXAMPLE.read_text(encoding="utf-8")
 
+    # Firmware OTA has a deliberately separate HMAC header contract. Watering,
+    # status, hold, and stop remain unauthenticated LAN-only endpoints.
     for marker in FORBIDDEN_AUTH_MARKERS:
-        assert marker not in source
         assert marker not in config
 
     handlers = (
@@ -39,7 +40,7 @@ def test_http_api_has_no_application_authentication() -> None:
         ("handle_water", "handle_hold_start"),
         ("handle_hold_start", "handle_hold_keepalive"),
         ("handle_hold_keepalive", "handle_stop"),
-        ("handle_stop", "configure_http_server"),
+        ("handle_stop", "handle_firmware_info"),
     )
     for name, next_name in handlers:
         handler = _handler_source(source, name, next_name)

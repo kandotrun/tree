@@ -5,7 +5,10 @@
 #define WIFI_PASSWORD "CHANGE_ME"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.5.0"
+// Revision 0 is a generic OTA build: it never overwrites provisioned NVS.
+// Set a higher positive revision only in a local config when intentionally
+// provisioning or rotating the runtime settings below.
+#define PROVISIONING_REVISION 0U
 
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32

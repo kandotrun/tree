@@ -151,6 +151,7 @@ ls /dev/cu.*
 platform = platformio/espressif32@6.13.0
 board = m5stack-atom
 framework = arduino
+board_build.partitions = partitions.csv
 upload_speed = 1500000
 monitor_speed = 115200
 
@@ -175,7 +176,6 @@ lib_deps =
 #define WIFI_PASSWORD "CHANGE_ME"
 
 #define DEVICE_NAME "balcony-watering"
-#define FIRMWARE_VERSION "0.5.0"
 #define PUMP_PIN 26
 #define MOISTURE_PIN 32
 #define LED_PIN 27
@@ -187,6 +187,9 @@ lib_deps =
 #define MAX_RUN_MS 180000UL
 #define COOLDOWN_MS 0UL
 #define BOOT_GUARD_MS 300000UL
+
+// 公開generic firmwareでは0。実機へ設定を移すUSB buildでは1以上にする。
+#define PROVISIONING_REVISION 0U
 ```
 
 開発時はコピーして`config.h`を作る。
@@ -194,6 +197,11 @@ lib_deps =
 ```bash
 cp firmware/include/config.example.h firmware/include/config.h
 ```
+
+firmware versionとtargetは秘密設定から分離し、checked-inの
+`firmware/include/firmware_identity.h`で管理する。
+初回USB導入では、実環境の値を入れた`config.h`の`PROVISIONING_REVISION`を1以上にする。
+firmwareは全設定をNVSへ保存し、revisionを最後に書く。以降のgeneric OTAではNVS設定を使う。
 
 `.gitignore`へ必ず追加する。
 

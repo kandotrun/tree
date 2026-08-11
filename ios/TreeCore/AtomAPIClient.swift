@@ -80,7 +80,7 @@ public protocol AtomAPI: Sendable {
     func stop() async throws -> StopAcknowledgement
 }
 
-public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
+public final class AtomAPIClient: AtomAPI, AtomFirmwareAPI, @unchecked Sendable {
     private struct RequestIDPayload: Encodable {
         let requestID: String
 
@@ -137,7 +137,7 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = requestTimeout
-        configuration.timeoutIntervalForResource = requestTimeout
+        configuration.timeoutIntervalForResource = max(requestTimeout, 180)
         let delegate = NoRedirectURLSessionDelegate()
         self.init(
             endpoint: endpoint,
@@ -198,6 +198,101 @@ public final class AtomAPIClient: AtomAPI, @unchecked Sendable {
             payload: EmptyPayload(),
             response: StopAcknowledgement.self
         )
+    }
+
+    public func fetchFirmwareCapability() async throws -> FirmwareCapability {
+        try await send(
+            path: "v1/firmware",
+            method: "GET",
+            response: FirmwareCapability.self
+        )
+    }
+
+    public func pairFirmware() async throws -> FirmwarePairResponse {
+        try await send(
+            path: "v1/firmware/pair",
+            method: "POST",
+            payload: EmptyPayload(),
+            response: FirmwarePairResponse.self
+        )
+    }
+
+    public func requestFirmwareChallenge() async throws -> FirmwareChallenge {
+        try await send(
+            path: "v1/firmware/challenge",
+            method: "POST",
+            payload: EmptyPayload(),
+            response: FirmwareChallenge.self
+        )
+    }
+
+    public func updateFirmware(
+        package: FirmwarePackage,
+        nonce: String,
+        signature: String
+    ) async throws -> FirmwareUpdateAcknowledgement {
+        guard isLowercaseHex(nonce, byteCount: 32),
+              isLowercaseHex(signature, byteCount: 32) else {
+            throw FirmwareValidationError.invalidAuthorization
+        }
+        let boundary = "TreeWatering-\(UUID().uuidString)"
+        var body = Data(
+            ("--\(boundary)\r\n"
+                + "Content-Disposition: form-data; name=\"firmware\"; "
+                + "filename=\"\(package.manifest.firmwareAsset)\"\r\n"
+                + "Content-Type: application/octet-stream\r\n\r\n").utf8
+        )
+        body.append(package.firmwareData)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+
+        var request = makeRequest(path: "v1/firmware/update", method: "POST")
+        request.timeoutInterval = 120
+        request.setValue(
+            "multipart/form-data; boundary=\(boundary)",
+            forHTTPHeaderField: "Content-Type"
+        )
+        request.setValue(
+            package.manifest.target,
+            forHTTPHeaderField: "X-Tree-Firmware-Target"
+        )
+        request.setValue(
+            package.manifest.firmwareVersion.rawValue,
+            forHTTPHeaderField: "X-Tree-Firmware-Version"
+        )
+        request.setValue(
+            String(package.manifest.size),
+            forHTTPHeaderField: "X-Tree-Firmware-Size"
+        )
+        request.setValue(
+            package.manifest.sha256,
+            forHTTPHeaderField: "X-Tree-Firmware-SHA256"
+        )
+        request.setValue(nonce, forHTTPHeaderField: "X-Tree-Firmware-Nonce")
+        request.setValue(signature, forHTTPHeaderField: "X-Tree-Firmware-Signature")
+        request.httpBody = body
+
+        let (data, urlResponse) = try await session.data(for: request)
+        guard let httpResponse = urlResponse as? HTTPURLResponse else {
+            throw AtomAPIError.invalidResponse
+        }
+        guard httpResponse.statusCode == 202 else {
+            if !(200 ... 299).contains(httpResponse.statusCode) {
+                let code = (try? JSONDecoder().decode(ErrorPayload.self, from: data).error)
+                    ?? "http_error"
+                throw AtomAPIError.http(status: httpResponse.statusCode, code: code)
+            }
+            throw AtomAPIError.invalidResponse
+        }
+        let acknowledgement = try JSONDecoder().decode(
+            FirmwareUpdateAcknowledgement.self,
+            from: data
+        )
+        guard acknowledgement.accepted,
+              acknowledgement.restarting,
+              acknowledgement.firmwareVersion == package.manifest.firmwareVersion else {
+            throw AtomAPIError.invalidResponse
+        }
+        return acknowledgement
     }
 
     private func send<Response: Decodable>(

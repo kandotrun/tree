@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import subprocess
@@ -10,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_SCRIPT = ROOT / "firmware" / "scripts" / "build_ota_manifest.py"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "firmware-release.yml"
 CONFIG_EXAMPLE = ROOT / "firmware" / "include" / "config.example.h"
+PARTITIONS = ROOT / "firmware" / "partitions.csv"
+PLATFORMIO = ROOT / "firmware" / "platformio.ini"
 
 
 def _run_manifest(
@@ -90,6 +93,7 @@ def test_release_workflow_builds_only_with_safe_generic_config() -> None:
     assert '"firmware-v*"' in workflow
     assert "contents: write" in workflow
     assert "cp firmware/include/config.example.h firmware/include/config.h" in workflow
+    assert "firmware/include/firmware_identity.h" in workflow
     assert 'git merge-base --is-ancestor "${GITHUB_SHA}" origin/main' in workflow
     assert "PROVISIONING_REVISION" in workflow
     assert "build_ota_manifest.py" in workflow
@@ -99,3 +103,18 @@ def test_release_workflow_builds_only_with_safe_generic_config() -> None:
     assert "#define PROVISIONING_REVISION 0" in config
     assert 'WIFI_PASSWORD "CHANGE_ME"' in config
     assert "secrets." not in workflow
+
+
+def test_partition_table_keeps_nvs_and_two_equal_ota_slots() -> None:
+    platformio = PLATFORMIO.read_text(encoding="utf-8")
+    rows = {
+        row[0].strip(): tuple(cell.strip() for cell in row[1:5])
+        for row in csv.reader(PARTITIONS.read_text(encoding="utf-8").splitlines())
+        if row and not row[0].lstrip().startswith("#")
+    }
+
+    assert "board_build.partitions = partitions.csv" in platformio
+    assert rows["nvs"] == ("data", "nvs", "0x9000", "0x5000")
+    assert rows["otadata"] == ("data", "ota", "0xe000", "0x2000")
+    assert rows["app0"] == ("app", "ota_0", "0x10000", "0x140000")
+    assert rows["app1"] == ("app", "ota_1", "0x150000", "0x140000")
