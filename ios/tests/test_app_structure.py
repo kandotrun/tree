@@ -53,11 +53,8 @@ class IOSAppStructureTests(unittest.TestCase):
         ]:
             self.assertIn(marker, firmware)
         self.assertIn('#define DEVICE_NAME "balcony-watering"', firmware_config)
-        self.assertEqual(workflow.count('      - "firmware/src/main.cpp"'), 2)
-        self.assertEqual(
-            workflow.count('      - "firmware/include/config.example.h"'),
-            2,
-        )
+        self.assertEqual(workflow.count('      - "firmware/src/**"'), 2)
+        self.assertEqual(workflow.count('      - "firmware/include/**"'), 2)
         self.assertIn("NWBrowser", discovery)
         self.assertIn("BonjourDeviceCandidate.serviceType", discovery)
 

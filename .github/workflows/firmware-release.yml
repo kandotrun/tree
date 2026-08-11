@@ -1,0 +1,112 @@
+name: Firmware Release
+
+on:
+  push:
+    tags:
+      - "firmware-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firmware-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require tagged commit on main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.platformio
+          key: platformio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+      - name: Install PlatformIO
+        run: python -m pip install 'platformio==6.1.19'
+      - name: Create safe generic OTA config
+        run: |
+          cp firmware/include/config.example.h firmware/include/config.h
+          python - <<'PY'
+          from pathlib import Path
+          config = Path("firmware/include/config.h").read_text(encoding="utf-8")
+          required = (
+              '#define WIFI_SSID "CHANGE_ME"',
+              '#define WIFI_PASSWORD "CHANGE_ME"',
+              '#define WATERING_ARMED false',
+              '#define PROVISIONING_REVISION 0',
+          )
+          missing = [line for line in required if line not in config]
+          if missing:
+              raise SystemExit(f"unsafe generic OTA config: missing {missing}")
+          PY
+      - name: Match firmware version to tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          tag = os.environ["TAG"]
+          match = re.fullmatch(r"firmware-v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))", tag)
+          if match is None:
+              raise SystemExit("tag must use firmware-vx.y.z")
+          version = match.group(1)
+          config = Path("firmware/include/config.h").read_text(encoding="utf-8")
+          expected = f'#define FIRMWARE_VERSION "{version}"'
+          if expected not in config:
+              raise SystemExit(f"tag {tag} does not match config firmware version")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          PY
+      - name: Test firmware policy
+        working-directory: firmware
+        run: pio test -e native
+      - name: Build generic ATOM Lite OTA image
+        working-directory: firmware
+        run: pio run -e m5stack-atom
+      - name: Package and verify release assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          asset="TreeWatering-m5stack-atom-${VERSION}.bin"
+          cp firmware/.pio/build/m5stack-atom/firmware.bin "dist/${asset}"
+          python firmware/scripts/build_ota_manifest.py \
+            --binary "dist/${asset}" \
+            --version "${VERSION}" \
+            --source-sha "${SOURCE_SHA}" \
+            --output dist/firmware-manifest.json
+          sha256sum --check <(python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          version = os.environ["VERSION"]
+          manifest = json.loads(Path("dist/firmware-manifest.json").read_text(encoding="utf-8"))
+          print(f'{manifest["sha256"]}  dist/TreeWatering-m5stack-atom-{version}.bin')
+          PY
+          )
+      - name: Publish immutable firmware release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --title "Firmware ${VERSION}" \
+            --notes "Generic ATOM Lite OTA image. Device secrets and safety configuration remain in NVS; first installation still requires USB commissioning." \
+            dist/firmware-manifest.json \
+            "dist/TreeWatering-m5stack-atom-${VERSION}.bin"

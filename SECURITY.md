@@ -24,6 +24,19 @@ Only the latest `main` branch is supported before the first stable release.
 Hardware operation remains experimental until the commissioning checklist in
 `docs/development-guide.md` is complete.
 
+## Firmware maintenance boundary
+
+Firmware maintenance routes are LAN-only and must never be exposed through the
+public gateway, port forwarding, or public DNS. Pairing requires physical access
+to the ATOM button; uploads require a fresh nonce, HMAC-SHA256, an image hash,
+and a strictly newer version. Treat a bypass of any of those checks, an update
+accepted while the pump is active, or disclosure of an OTA pairing key as a
+security issue.
+
+Public release images must be built only from `config.example.h` with
+`PROVISIONING_REVISION 0`. Never publish an image built from the ignored local
+`config.h`, because it may contain real Wi-Fi configuration.
+
 ## Public gateway boundary
 
 The ATOM Lite remains LAN-only. Do not expose its port, embedded dashboard, or

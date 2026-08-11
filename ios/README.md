@@ -30,6 +30,12 @@ embedded installed-device address.
   and ten-minute absolute cutoff remain the physical authority.
 - Raw moisture ADC is displayed without inventing a percentage before dry/wet
   calibration exists.
+- Firmware checks and installs are manual only. The app never installs on launch
+  and never retries an ambiguous upload. Pairing requires a three-second press
+  on the ATOM button; the resulting device-scoped key stays in the iOS Keychain.
+- OTA is available only while the controller is idle and the pump is reported
+  off. Use stable power, verify the target/version/hash, and confirm the
+  destructive action before upload.
 
 ## Requirements
 
@@ -63,6 +69,11 @@ status contract, and connects automatically. Manual `http://<ATOM_LAN_IP>`
 entry remains under **手動で設定** for recovery. The app requests iOS Local
 Network permission when discovery starts. Older firmware does not qualify for
 automatic connection and must be updated or configured manually.
+
+Firmware 0.5.x and earlier need one USB flash before the app can perform later
+OTA updates. See [`docs/firmware-ota.md`](../docs/firmware-ota.md) for physical
+pairing, release packaging, failure handling, and the hardware verification
+checklist.
 
 ## Test
 
