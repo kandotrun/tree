@@ -30,6 +30,7 @@ final class DashboardViewModel: ObservableObject {
     @Published var showDoseConfirmation = false
     @Published var showSettings = false
     @Published var showForceEndpointConfirmation = false
+    @Published var showFirmwareUpdateConfirmation = false
     @Published private(set) var endpointValidationMessage: String?
     @Published private(set) var status: AtomStatus?
     @Published private(set) var connectionState: DeviceConnectionState = .unconfigured
@@ -43,10 +44,18 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var stopRecommended = false
     @Published private(set) var isDiscovering = false
     @Published private(set) var discoveryMessage = "同じWi-Fi内を検索中です…"
+    @Published private(set) var firmwareCapability: FirmwareCapability?
+    @Published private(set) var firmwareUpdateMessage: String?
+    @Published private(set) var isFirmwarePaired = false
+    @Published private(set) var isFirmwarePairingInFlight = false
+    @Published private(set) var isCheckingFirmwareUpdate = false
+    @Published private(set) var isFirmwareUpdateInFlight = false
     @Published var notice: AppNotice?
 
     private let defaults: UserDefaults
     private let isPreviewMode: Bool
+    private let firmwareReleaseClient = FirmwareReleaseClient()
+    private let firmwareUpdateKeyStore: any FirmwareUpdateKeyStoring = FirmwareUpdateKeyStore()
     private let discovery = BonjourDeviceDiscovery()
     private var api: AtomAPIClient?
     private var coordinator: WateringCoordinator?
@@ -63,6 +72,7 @@ final class DashboardViewModel: ObservableObject {
     private var discoveryGeneration = 0
     private var discoveryTimeoutTask: Task<Void, Never>?
     private var discoveryValidationTasks: [String: Task<Void, Never>] = [:]
+    private var availableFirmwarePackage: FirmwarePackage?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -105,6 +115,33 @@ final class DashboardViewModel: ObservableObject {
     var hasEndpoint: Bool { api != nil }
     var isOnline: Bool { connectionState == .online }
 
+    var currentFirmwareVersion: String {
+        firmwareCapability?.currentVersion.description ?? status?.firmwareVersion ?? "不明"
+    }
+
+    var availableFirmwareVersion: String? {
+        availableFirmwarePackage?.manifest.firmwareVersion.description
+    }
+
+    var firmwareUpdateSupported: Bool {
+        status?.otaSupported == true || firmwareCapability?.otaSupported == true
+    }
+
+    var canManageFirmware: Bool {
+        isOnline
+            && status?.state == .idle
+            && status?.pump == false
+            && !isActionInFlight
+            && !isStopping
+            && !holdGestureActive
+            && !holdStartInFlight
+            && !holdEndInFlight
+            && !holdActive
+            && !stopRecommended
+            && !isFirmwarePairingInFlight
+            && !isFirmwareUpdateInFlight
+    }
+
     var endpointHost: String {
         if isPreviewMode { return "プレビュー" }
         guard let value = defaults.string(forKey: Self.endpointDefaultsKey),
@@ -128,6 +165,8 @@ final class DashboardViewModel: ObservableObject {
             && !holdEndInFlight
             && !holdActive
             && !stopRecommended
+            && !isFirmwarePairingInFlight
+            && !isFirmwareUpdateInFlight
             && !durationOptions.isEmpty
     }
 
@@ -149,6 +188,8 @@ final class DashboardViewModel: ObservableObject {
             && !holdStartInFlight
             && !holdEndInFlight
             && !holdActive
+            && !isFirmwarePairingInFlight
+            && !isFirmwareUpdateInFlight
             && (!shouldShowStop || connectionState == .offline)
     }
 
@@ -257,6 +298,190 @@ final class DashboardViewModel: ObservableObject {
         stopDiscovery(invalidate: true)
         if holdGestureActive || holdStartInFlight || holdActive {
             holdGestureEnded()
+        }
+    }
+
+    func pairFirmwareUpdates() {
+        guard canManageFirmware,
+              firmwareUpdateSupported,
+              !isFirmwarePairingInFlight,
+              let api,
+              let deviceName = status?.deviceName else { return }
+        let generationAtStart = endpointGeneration
+        isFirmwarePairingInFlight = true
+        firmwareUpdateMessage = nil
+
+        Task {
+            defer {
+                if endpointGeneration == generationAtStart {
+                    isFirmwarePairingInFlight = false
+                }
+            }
+            do {
+                let response = try await api.pairFirmware()
+                guard endpointGeneration == generationAtStart,
+                      response.paired else { return }
+                try firmwareUpdateKeyStore.saveKey(response.otaKey, deviceName: deviceName)
+                isFirmwarePaired = true
+                firmwareUpdateMessage = "更新アクセスをペアリングしました"
+            } catch {
+                guard endpointGeneration == generationAtStart else { return }
+                isFirmwarePaired = false
+                firmwareUpdateMessage = firmwareUpdateErrorMessage(error)
+            }
+        }
+    }
+
+    func checkForFirmwareUpdate() {
+        guard canManageFirmware,
+              firmwareUpdateSupported,
+              !isCheckingFirmwareUpdate,
+              let api else { return }
+        let generationAtStart = endpointGeneration
+        isCheckingFirmwareUpdate = true
+        firmwareUpdateMessage = "更新を確認しています…"
+
+        Task {
+            defer {
+                if endpointGeneration == generationAtStart {
+                    isCheckingFirmwareUpdate = false
+                }
+            }
+            do {
+                let capability = try await api.fetchFirmwareCapability()
+                guard endpointGeneration == generationAtStart,
+                      capability.otaSupported else { return }
+                let package = try await firmwareReleaseClient.fetchLatestPackage(
+                    for: capability
+                )
+                guard endpointGeneration == generationAtStart else { return }
+                firmwareCapability = capability
+                updateFirmwarePairingState(capability: capability)
+                availableFirmwarePackage = package
+                if let package {
+                    firmwareUpdateMessage =
+                        "ファームウェア \(package.manifest.firmwareVersion) を利用できます"
+                } else {
+                    firmwareUpdateMessage = "利用できる新しいファームウェアはありません"
+                }
+            } catch {
+                guard endpointGeneration == generationAtStart else { return }
+                availableFirmwarePackage = nil
+                firmwareUpdateMessage = firmwareUpdateErrorMessage(error)
+            }
+        }
+    }
+
+    func requestFirmwareUpdateConfirmation() {
+        guard canManageFirmware,
+              isFirmwarePaired,
+              availableFirmwarePackage != nil else { return }
+        showFirmwareUpdateConfirmation = true
+    }
+
+    func installConfirmedFirmware() {
+        showFirmwareUpdateConfirmation = false
+        guard canManageFirmware,
+              isFirmwarePaired,
+              let api,
+              let package = availableFirmwarePackage,
+              let deviceName = status?.deviceName,
+              let otaKey = try? firmwareUpdateKeyStore.loadKey(deviceName: deviceName) else {
+            firmwareUpdateMessage = "更新鍵を確認できません。ATOM本体と再ペアリングしてください"
+            return
+        }
+        let generationAtStart = endpointGeneration
+        isFirmwareUpdateInFlight = true
+        firmwareUpdateMessage = "ファームウェアを送信しています…"
+        pollingTask?.cancel()
+        pollingTask = nil
+        statusAdoptionGate.beginOperation()
+
+        Task {
+            var uploadStarted = false
+            defer {
+                statusAdoptionGate.endOperation()
+                if endpointGeneration == generationAtStart {
+                    isFirmwareUpdateInFlight = false
+                    if isSceneActive {
+                        startPolling()
+                    }
+                }
+            }
+            do {
+                let freshCapability = try await api.fetchFirmwareCapability()
+                guard freshCapability.paired else {
+                    throw AtomAPIError.http(status: 403, code: "not_paired")
+                }
+                let validatedPackage = try FirmwarePackage(
+                    manifest: package.manifest,
+                    firmwareData: package.firmwareData,
+                    capability: freshCapability
+                )
+                let challenge = try await api.requestFirmwareChallenge()
+                let signature = try FirmwareHMAC.signature(
+                    otaKeyHex: otaKey,
+                    deviceName: deviceName,
+                    target: freshCapability.target,
+                    currentVersion: freshCapability.currentVersion,
+                    newVersion: validatedPackage.manifest.firmwareVersion,
+                    size: validatedPackage.firmwareData.count,
+                    sha256: validatedPackage.manifest.sha256,
+                    nonce: challenge.nonce
+                )
+                guard endpointGeneration == generationAtStart else { return }
+                uploadStarted = true
+                let response = try await api.updateFirmware(
+                    package: validatedPackage,
+                    nonce: challenge.nonce,
+                    signature: signature
+                )
+                guard endpointGeneration == generationAtStart else { return }
+                guard response.accepted,
+                      response.restarting,
+                      response.firmwareVersion == validatedPackage.manifest.firmwareVersion else {
+                    throw AtomAPIError.invalidResponse
+                }
+                firmwareCapability = nil
+                availableFirmwarePackage = nil
+                firmwareUpdateMessage = "更新を受け付けました。ATOMの再起動を待っています"
+            } catch {
+                guard endpointGeneration == generationAtStart else { return }
+                if uploadStarted {
+                    firmwareCapability = nil
+                    availableFirmwarePackage = nil
+                    firmwareUpdateMessage =
+                        "更新結果が不明です。再送せず、再接続後のバージョンを確認してください"
+                } else {
+                    firmwareUpdateMessage = firmwareUpdateErrorMessage(error)
+                }
+            }
+        }
+    }
+
+    func refreshFirmwareCapability() {
+        guard isOnline,
+              status?.otaSupported == true,
+              !isFirmwareUpdateInFlight,
+              let api else {
+            firmwareCapability = nil
+            availableFirmwarePackage = nil
+            isFirmwarePaired = false
+            return
+        }
+        let generationAtStart = endpointGeneration
+        Task {
+            do {
+                let capability = try await api.fetchFirmwareCapability()
+                guard endpointGeneration == generationAtStart else { return }
+                firmwareCapability = capability
+                updateFirmwarePairingState(capability: capability)
+            } catch {
+                guard endpointGeneration == generationAtStart else { return }
+                firmwareCapability = nil
+                isFirmwarePaired = false
+                firmwareUpdateMessage = firmwareUpdateErrorMessage(error)
+            }
         }
     }
 
@@ -499,6 +724,14 @@ final class DashboardViewModel: ObservableObject {
         connectionState = .connecting
         stopRecommended = false
         holdActive = false
+        firmwareCapability = nil
+        availableFirmwarePackage = nil
+        firmwareUpdateMessage = nil
+        isFirmwarePaired = false
+        isFirmwarePairingInFlight = false
+        isCheckingFirmwareUpdate = false
+        isFirmwareUpdateInFlight = false
+        showFirmwareUpdateConfirmation = false
     }
 
     private func startPolling() {
@@ -606,6 +839,40 @@ final class DashboardViewModel: ObservableObject {
         lastSafetySnapshotRevision = snapshot.revision
         stopRecommended = snapshot.stopRecommended
         holdActive = snapshot.holdActive
+    }
+
+    private func updateFirmwarePairingState(capability: FirmwareCapability) {
+        guard capability.paired,
+              let deviceName = status?.deviceName else {
+            isFirmwarePaired = false
+            return
+        }
+        do {
+            isFirmwarePaired = try firmwareUpdateKeyStore.loadKey(deviceName: deviceName) != nil
+        } catch {
+            isFirmwarePaired = false
+        }
+    }
+
+    private func firmwareUpdateErrorMessage(_ error: Error) -> String {
+        guard let apiError = error as? AtomAPIError,
+              case let .http(_, code) = apiError else {
+            return "ファームウェア更新の通信または検証に失敗しました"
+        }
+        switch code {
+        case "pairing_window_closed":
+            return "ATOM本体のボタンを3秒間押してから、60秒以内に再実行してください"
+        case "not_paired", "invalid_signature":
+            return "更新鍵が一致しません。ATOM本体と再ペアリングしてください"
+        case "ota_not_idle", "pump_active", "operation_in_progress":
+            return "ポンプ停止とIDLE状態を確認してから更新してください"
+        case "invalid_version", "not_newer":
+            return "現在版より新しいファームウェアだけ更新できます"
+        case "invalid_size", "invalid_sha256", "invalid_image":
+            return "ファームウェアpackageの検証に失敗しました"
+        default:
+            return "ATOMが更新を拒否しました（\(code)）"
+        }
     }
 
     private func endpointErrorMessage(_ error: Error) -> String {

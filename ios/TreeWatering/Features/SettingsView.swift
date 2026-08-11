@@ -38,7 +38,77 @@ struct SettingsView: View {
                     Section("接続方式") {
                         Label("LAN内で端末へ直接接続", systemImage: "wifi.router")
                         Label("クラウド通信なし", systemImage: "icloud.slash")
-                        Label("アカウント・認証なし", systemImage: "person.crop.circle.badge.xmark")
+                        Label("給水操作はアカウント不要", systemImage: "person.crop.circle.badge.xmark")
+                    }
+
+                    Section {
+                        LabeledContent("現在", value: model.currentFirmwareVersion)
+
+                        if model.firmwareUpdateSupported {
+                            Label(
+                                model.isFirmwarePaired ? "更新アクセス設定済み" : "更新アクセス未設定",
+                                systemImage: model.isFirmwarePaired
+                                    ? "lock.shield.fill"
+                                    : "lock.open.fill"
+                            )
+
+                            Text("ATOM本体のボタンを3秒間押し、60秒以内にペアリングします。")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+
+                            Button(
+                                model.isFirmwarePaired
+                                    ? "更新アクセスを再設定"
+                                    : "更新アクセスをペアリング"
+                            ) {
+                                model.pairFirmwareUpdates()
+                            }
+                            .disabled(
+                                !model.canManageFirmware
+                                    || model.isFirmwarePairingInFlight
+                                    || model.isFirmwareUpdateInFlight
+                            )
+
+                            Button("更新を確認") {
+                                model.checkForFirmwareUpdate()
+                            }
+                            .disabled(
+                                !model.canManageFirmware
+                                    || model.isCheckingFirmwareUpdate
+                                    || model.isFirmwareUpdateInFlight
+                            )
+
+                            if let version = model.availableFirmwareVersion {
+                                LabeledContent("利用可能", value: version)
+                                Button("ファームウェア \(version) へ更新") {
+                                    model.requestFirmwareUpdateConfirmation()
+                                }
+                                .disabled(
+                                    !model.canManageFirmware
+                                        || !model.isFirmwarePaired
+                                        || model.isFirmwareUpdateInFlight
+                                )
+                            }
+
+                            if model.isFirmwarePairingInFlight
+                                || model.isCheckingFirmwareUpdate
+                                || model.isFirmwareUpdateInFlight {
+                                ProgressView()
+                            }
+
+                            if let message = model.firmwareUpdateMessage {
+                                Text(message)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Label("最初の1回はUSB書き込みが必要です", systemImage: "cable.connector")
+                                .foregroundStyle(Color.treeWarning)
+                        }
+                    } header: {
+                        Text("ファームウェア更新")
+                    } footer: {
+                        Text("給水中は更新できません。USBなど安定した電源で実行し、再起動後もポンプ停止を確認します。")
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -75,7 +145,20 @@ struct SettingsView: View {
                 "現在の端末へ停止確認できません。ポンプが停止していることを直接確認するか、電源を切ってから変更してください。"
             )
         }
-        .onAppear { endpointFocused = false }
+        .alert("ファームウェアを更新しますか？", isPresented: $model.showFirmwareUpdateConfirmation) {
+            Button("キャンセル", role: .cancel) {}
+            Button("更新", role: .destructive) {
+                model.installConfirmedFirmware()
+            }
+        } message: {
+            Text(
+                "現在 \(model.currentFirmwareVersion) から \(model.availableFirmwareVersion ?? "不明") へ更新します。ポンプが停止し、ATOMが安定した電源へ接続されていることを確認してください。"
+            )
+        }
+        .onAppear {
+            endpointFocused = false
+            model.refreshFirmwareCapability()
+        }
         .presentationDetents([.medium, .large])
     }
 }
