@@ -11,11 +11,12 @@ extension Color {
     static let treeSun = Color(red: 0.957, green: 0.725, blue: 0.314)
 }
 
-extension AtomState {
+extension WateringAvailability {
     var japaneseTitle: String {
         switch self {
         case .bootGuard: "起動を確認中"
-        case .idle: "水やりできます"
+        case .ready: "水やりできます"
+        case .unarmed: "給水は無効です"
         case .watering: "給水中"
         case .error: "端末エラー"
         case .unknown: "状態を確認中"
@@ -25,7 +26,8 @@ extension AtomState {
     var japaneseDetail: String {
         switch self {
         case .bootGuard: "安全待機が終わるまで少し待ってください"
-        case .idle: "ポンプは停止しています"
+        case .ready: "ポンプは停止しています"
+        case .unarmed: "実機テスト後に端末を有効化してください"
         case .watering: "指示した時間で自動停止します"
         case .error: "端末と配線を確認してください"
         case .unknown: "アプリが未対応の端末状態です"
@@ -34,8 +36,9 @@ extension AtomState {
 
     var tint: Color {
         switch self {
-        case .idle: .treeLeaf
+        case .ready: .treeLeaf
         case .watering: .treeWater
+        case .unarmed: .orange
         case .bootGuard, .unknown: .orange
         case .error: .treeWarning
         }
