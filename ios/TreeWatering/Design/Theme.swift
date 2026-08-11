@@ -33,13 +33,12 @@ extension WateringAvailability {
         case .unknown: "アプリが未対応の端末状態です"
         }
     }
-}
 
-extension AtomState {
     var tint: Color {
         switch self {
-        case .idle: .treeLeaf
+        case .ready: .treeLeaf
         case .watering: .treeWater
+        case .unarmed: .orange
         case .bootGuard, .unknown: .orange
         case .error: .treeWarning
         }

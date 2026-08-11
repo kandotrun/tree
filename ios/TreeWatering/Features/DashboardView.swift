@@ -110,7 +110,7 @@ private struct StatusCard: View {
         VStack(spacing: 20) {
             HStack(alignment: .center, spacing: 18) {
                 StatusOrb(
-                    state: model.status?.state,
+                    availability: model.status?.wateringAvailability,
                     isOnline: model.isOnline,
                     isRefreshing: model.isRefreshing,
                     remainingFraction: model.status.flatMap { status in
@@ -177,21 +177,21 @@ private struct StatusCard: View {
 }
 
 private struct StatusOrb: View {
-    let state: AtomState?
+    let availability: WateringAvailability?
     let isOnline: Bool
     let isRefreshing: Bool
     let remainingFraction: Double?
 
     var tint: Color {
         guard isOnline else { return Color.treeInk.opacity(0.28) }
-        return state?.tint ?? .orange
+        return availability?.tint ?? .orange
     }
 
     var body: some View {
         ZStack {
             Circle()
                 .fill(tint.opacity(0.12))
-            if state == .watering, let remainingFraction {
+            if availability == .watering, let remainingFraction {
                 Circle()
                     .stroke(tint.opacity(0.16), lineWidth: 7)
                     .padding(5)
@@ -209,10 +209,10 @@ private struct StatusOrb: View {
                     .stroke(tint.opacity(0.20), lineWidth: 6)
                     .padding(5)
             }
-            Image(systemName: state == .watering ? "drop.fill" : "leaf.fill")
+            Image(systemName: availability == .watering ? "drop.fill" : "leaf.fill")
                 .font(.system(size: 32, weight: .bold))
                 .foregroundStyle(tint)
-                .symbolEffect(.pulse, options: .repeating, isActive: state == .watering)
+                .symbolEffect(.pulse, options: .repeating, isActive: availability == .watering)
             if isRefreshing {
                 Circle()
                     .trim(from: 0.02, to: 0.24)
@@ -391,7 +391,7 @@ private struct HoldCard: View {
             )
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
-            .accessibilityHint("画面を押している間だけポンプが動きます")
+            .accessibilityHint(acceptsTouch ? "画面を押している間だけポンプが動きます" : unavailableMessage)
             .sensoryFeedback(.impact(weight: .medium), trigger: model.holdGestureActive)
 
             Label("通信が途切れても、端末側の安全機構が1.5秒以内に停止します", systemImage: "shield.checkered")
