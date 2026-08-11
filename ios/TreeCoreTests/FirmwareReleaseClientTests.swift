@@ -278,7 +278,28 @@ final class FirmwareReleaseClientTests: XCTestCase {
         }
     }
 
-    func testRejectsHTTPRedirectResponse() async throws {
+    func testRedirectPolicyFollowsOnlyAllowlistedHTTPSURLs() throws {
+        let allowed = URLRequest(
+            url: try XCTUnwrap(
+                URL(string: "https://release-assets.githubusercontent.com/firmware.bin")
+            )
+        )
+        let evil = URLRequest(
+            url: try XCTUnwrap(URL(string: "https://evil.example/firmware.bin"))
+        )
+        let cleartext = URLRequest(
+            url: try XCTUnwrap(URL(string: "http://github.com/firmware.bin"))
+        )
+
+        XCTAssertEqual(
+            FirmwareReleaseRedirectPolicy.allowedRedirect(allowed)?.url,
+            allowed.url
+        )
+        XCTAssertNil(FirmwareReleaseRedirectPolicy.allowedRedirect(evil))
+        XCTAssertNil(FirmwareReleaseRedirectPolicy.allowedRedirect(cleartext))
+    }
+
+    func testRejectsNon200Response() async throws {
         let manifestURL = "https://github.com/kandotrun/tree/firmware-manifest.json"
         let releases = try releasesData([
             release(

@@ -319,9 +319,19 @@ final class DashboardViewModel: ObservableObject {
             }
             do {
                 let response = try await api.pairFirmware()
-                guard endpointGeneration == generationAtStart,
-                      response.paired else { return }
-                try firmwareUpdateKeyStore.saveKey(response.otaKey, deviceName: deviceName)
+                guard endpointGeneration == generationAtStart else { return }
+                guard response.paired else {
+                    isFirmwarePaired = false
+                    firmwareUpdateMessage = "ATOMがペアリングを受け付けませんでした。ボタンを押して再試行してください"
+                    return
+                }
+                do {
+                    try firmwareUpdateKeyStore.saveKey(response.otaKey, deviceName: deviceName)
+                } catch {
+                    isFirmwarePaired = false
+                    firmwareUpdateMessage = "更新鍵をiPhoneに保存できませんでした。再ペアリングしてください"
+                    return
+                }
                 isFirmwarePaired = true
                 firmwareUpdateMessage = "更新アクセスをペアリングしました"
             } catch {
@@ -349,8 +359,12 @@ final class DashboardViewModel: ObservableObject {
             }
             do {
                 let capability = try await api.fetchFirmwareCapability()
-                guard endpointGeneration == generationAtStart,
-                      capability.otaSupported else { return }
+                guard endpointGeneration == generationAtStart else { return }
+                guard capability.otaSupported else {
+                    availableFirmwarePackage = nil
+                    firmwareUpdateMessage = "この端末はOTA更新に対応していません"
+                    return
+                }
                 let package = try await firmwareReleaseClient.fetchLatestPackage(
                     for: capability
                 )
@@ -461,7 +475,7 @@ final class DashboardViewModel: ObservableObject {
 
     func refreshFirmwareCapability() {
         guard isOnline,
-              status?.otaSupported == true,
+              firmwareUpdateSupported,
               !isFirmwareUpdateInFlight,
               let api else {
             firmwareCapability = nil

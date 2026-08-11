@@ -76,6 +76,7 @@ constexpr uint32_t kPairingButtonHoldMs = 3000U;
 constexpr uint32_t kPairingWindowMs = 60000U;
 constexpr uint32_t kOtaHealthWindowMs = 15000U;
 constexpr uint32_t kOtaRestartDelayMs = 750U;
+constexpr uint32_t kOtaUploadStallTimeoutMs = 30000U;
 constexpr std::size_t kMaximumOtaFirmwareBytes = 0x140000U;
 constexpr std::size_t kOtaHeaderCount = 6U;
 const char* kOtaHeaderNames[kOtaHeaderCount] = {
@@ -126,6 +127,7 @@ struct OtaUploadState {
   bool failed = false;
   bool ready_to_finalize = false;
   bool sha_initialized = false;
+  uint32_t last_activity_at = 0U;
   std::string error_code;
   std::array<uint8_t, watering::kOtaDigestBytes> digest{};
   mbedtls_sha256_context sha_context{};
@@ -371,7 +373,7 @@ bool ota_safety_gate_is_open() {
   return controller != nullptr &&
          watering::ota_safety_gate_allows(
              controller->state(), digitalRead(PUMP_PIN) == HIGH,
-             controller->state() == State::Watering, ota_update_active,
+             false, ota_update_active,
              ota_reboot_pending || ota_boot_validation_pending);
 }
 
@@ -656,7 +658,7 @@ void handle_firmware_info() {
 
 void handle_firmware_pair() {
   const uint32_t now = millis();
-  if (!pairing_window_is_open(now) || !ota_safety_gate_is_open()) {
+  if (!pairing_window_is_open(now)) {
     send_error(423, "pairing_window_closed");
     return;
   }
@@ -687,14 +689,10 @@ void handle_firmware_challenge() {
     send_error(423, "firmware_update_locked");
     return;
   }
-  if (!watering::nonce_is_fresh_and_matching(
-          ota_nonce, ota_nonce, ota_nonce_issued_at, now)) {
-    std::array<uint8_t, watering::kOtaDigestBytes> nonce_bytes{};
-    esp_fill_random(nonce_bytes.data(), nonce_bytes.size());
-    ota_nonce =
-        watering::encode_lower_hex(nonce_bytes.data(), nonce_bytes.size());
-    ota_nonce_issued_at = now;
-  }
+  std::array<uint8_t, watering::kOtaDigestBytes> nonce_bytes{};
+  esp_fill_random(nonce_bytes.data(), nonce_bytes.size());
+  ota_nonce = watering::encode_lower_hex(nonce_bytes.data(), nonce_bytes.size());
+  ota_nonce_issued_at = now;
   JsonDocument response;
   response["nonce"] = ota_nonce.c_str();
   response["expires_in_ms"] =
@@ -853,6 +851,7 @@ bool begin_ota_upload(HTTPUpload& upload) {
     abort_ota_upload("invalid_nonce");
     return false;
   }
+  consume_ota_nonce();
   if (!ota_safety_gate_is_open()) {
     abort_ota_upload("firmware_update_locked");
     return false;
@@ -861,7 +860,6 @@ bool begin_ota_upload(HTTPUpload& upload) {
     abort_ota_upload("invalid_signature");
     return false;
   }
-  consume_ota_nonce();
   pump_safety_gate.cutoff();
   disarm_pump_safety_timer();
   digitalWrite(PUMP_PIN, LOW);
@@ -878,6 +876,7 @@ bool begin_ota_upload(HTTPUpload& upload) {
     return false;
   }
   ota_update_active = true;
+  ota_upload.last_activity_at = millis();
   return true;
 }
 
@@ -895,6 +894,7 @@ void handle_firmware_upload() {
     return;
   }
   if (upload.status == UPLOAD_FILE_WRITE) {
+    ota_upload.last_activity_at = millis();
     if (ota_upload.received + upload.currentSize > ota_upload.metadata.size ||
         Update.write(upload.buf, upload.currentSize) != upload.currentSize ||
         mbedtls_sha256_update_ret(&ota_upload.sha_context, upload.buf,
@@ -927,6 +927,14 @@ void handle_firmware_upload() {
     return;
   }
   ota_upload.ready_to_finalize = true;
+}
+
+void maintain_ota_upload_timeout(uint32_t now) {
+  if (watering::ota_upload_has_stalled(
+          ota_update_active, ota_upload.ready_to_finalize,
+          ota_upload.last_activity_at, now, kOtaUploadStallTimeoutMs)) {
+    abort_ota_upload("upload_timeout");
+  }
 }
 
 void finalize_firmware_update() {
@@ -1245,6 +1253,7 @@ void loop() {
   controller->tick(now);
   apply_pump_output();
   maintain_pairing_button(now);
+  maintain_ota_upload_timeout(now);
   maintain_ota_boot_validation(now);
   maintain_ota_restart(now);
   update_led(now);

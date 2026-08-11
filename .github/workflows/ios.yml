@@ -6,6 +6,7 @@ on:
       - "ios/**"
       - "firmware/src/**"
       - "firmware/include/**"
+      - "firmware/scripts/**"
       - ".github/workflows/ios.yml"
   push:
     branches: [main]
@@ -13,6 +14,7 @@ on:
       - "ios/**"
       - "firmware/src/**"
       - "firmware/include/**"
+      - "firmware/scripts/**"
       - ".github/workflows/ios.yml"
 
 permissions:

@@ -3,16 +3,50 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public final class FirmwareReleaseClient: @unchecked Sendable {
-    private static let releasesURL = URL(
-        string: "https://api.github.com/repos/kandotrun/tree/releases?per_page=20"
-    )!
+enum FirmwareReleaseRedirectPolicy {
     private static let allowedHosts: Set<String> = [
         "api.github.com",
         "github.com",
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
     ]
+
+    static func allows(_ url: URL?) -> Bool {
+        guard let url,
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(),
+              allowedHosts.contains(host),
+              url.user == nil,
+              url.password == nil else {
+            return false
+        }
+        return true
+    }
+
+    static func allowedRedirect(_ request: URLRequest) -> URLRequest? {
+        allows(request.url) ? request : nil
+    }
+}
+
+private final class FirmwareReleaseRedirectDelegate: NSObject,
+    URLSessionTaskDelegate,
+    @unchecked Sendable
+{
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(FirmwareReleaseRedirectPolicy.allowedRedirect(request))
+    }
+}
+
+public final class FirmwareReleaseClient: @unchecked Sendable {
+    private static let releasesURL = URL(
+        string: "https://api.github.com/repos/kandotrun/tree/releases?per_page=20"
+    )!
     private static let manifestAssetName = "firmware-manifest.json"
     private static let maximumManifestBytes = 64 * 1024
 
@@ -24,8 +58,13 @@ public final class FirmwareReleaseClient: @unchecked Sendable {
         configuration.timeoutIntervalForRequest = requestTimeout
         configuration.timeoutIntervalForResource = max(requestTimeout, 180)
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let redirectDelegate = FirmwareReleaseRedirectDelegate()
         self.init(
-            session: URLSession(configuration: configuration),
+            session: URLSession(
+                configuration: configuration,
+                delegate: redirectDelegate,
+                delegateQueue: nil
+            ),
             requestTimeout: requestTimeout
         )
     }
@@ -119,11 +158,7 @@ public final class FirmwareReleaseClient: @unchecked Sendable {
     }
 
     private func validatedGitHubURL(_ url: URL) throws -> URL {
-        guard url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased(),
-              Self.allowedHosts.contains(host),
-              url.user == nil,
-              url.password == nil else {
+        guard FirmwareReleaseRedirectPolicy.allows(url) else {
             throw FirmwareValidationError.invalidPackage
         }
         return url

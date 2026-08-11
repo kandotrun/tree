@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_SCRIPT = ROOT / "firmware" / "scripts" / "build_ota_manifest.py"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "firmware-release.yml"
+IOS_WORKFLOW = ROOT / ".github" / "workflows" / "ios.yml"
 CONFIG_EXAMPLE = ROOT / "firmware" / "include" / "config.example.h"
 PARTITIONS = ROOT / "firmware" / "partitions.csv"
 PLATFORMIO = ROOT / "firmware" / "platformio.ini"
@@ -92,6 +93,7 @@ def test_release_workflow_builds_only_with_safe_generic_config() -> None:
 
     assert '"firmware-v*"' in workflow
     assert "contents: write" in workflow
+    assert "persist-credentials: false" in workflow
     assert "cp firmware/include/config.example.h firmware/include/config.h" in workflow
     assert "firmware/include/firmware_identity.h" in workflow
     assert 'git merge-base --is-ancestor "${GITHUB_SHA}" origin/main' in workflow
@@ -103,6 +105,12 @@ def test_release_workflow_builds_only_with_safe_generic_config() -> None:
     assert "#define PROVISIONING_REVISION 0" in config
     assert 'WIFI_PASSWORD "CHANGE_ME"' in config
     assert "secrets." not in workflow
+
+
+def test_ios_contract_workflow_runs_when_manifest_generator_changes() -> None:
+    workflow = IOS_WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count('"firmware/scripts/**"') == 2
 
 
 def test_partition_table_keeps_nvs_and_two_equal_ota_slots() -> None:

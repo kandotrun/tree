@@ -202,6 +202,10 @@ verification, retention, and shutdown.
   proxy and read-only mock on an iOS 26 simulator; CI preview screenshots do not
   exercise runtime discovery. v0.5.0 remains physically unverified until it is
   flashed to the ATOM and the boot-off, Bonjour, and status checks are repeated.
+- Firmware v0.6.0 adds physical-button/HMAC OTA, dual app partitions, and
+  unhealthy-first-boot rollback. It is build/test verified only; G39 pairing,
+  interrupted upload, normal OTA, rollback, and pump-low behavior remain
+  physically unverified until the checklist in `docs/firmware-ota.md` passes.
 - Measured flow, waterproofing, power endurance, drainage, siphon behavior, and
   the supervised pilot remain incomplete.
 - Automatic scheduling remains disabled by default.

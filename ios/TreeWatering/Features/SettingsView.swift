@@ -93,7 +93,8 @@ struct SettingsView: View {
                             if model.isFirmwarePairingInFlight
                                 || model.isCheckingFirmwareUpdate
                                 || model.isFirmwareUpdateInFlight {
-                                ProgressView()
+                                ProgressView(firmwareProgressLabel)
+                                    .accessibilityLabel(firmwareProgressLabel)
                             }
 
                             if let message = model.firmwareUpdateMessage {
@@ -160,5 +161,15 @@ struct SettingsView: View {
             model.refreshFirmwareCapability()
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var firmwareProgressLabel: String {
+        if model.isFirmwareUpdateInFlight {
+            return "ファームウェアを送信しています"
+        }
+        if model.isCheckingFirmwareUpdate {
+            return "更新を確認しています"
+        }
+        return "ペアリングしています"
     }
 }

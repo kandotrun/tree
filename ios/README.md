@@ -75,6 +75,19 @@ OTA updates. See [`docs/firmware-ota.md`](../docs/firmware-ota.md) for physical
 pairing, release packaging, failure handling, and the hardware verification
 checklist.
 
+After the bootstrap firmware is installed and the controller reports idle with
+the pump off, hold the ATOM button for three seconds and tap **更新アクセスをペアリング**
+within 60 seconds. Then tap **更新を確認**, review the version and stable-power
+warning, and explicitly confirm the upload. The initial key transfer is plain
+HTTP on the local network, so do not pair on guest/shared Wi-Fi; use only the
+trusted private WPA2/WPA3 LAN described in the OTA runbook.
+
+> [!WARNING]
+> The OTA firmware, G39 active-low button handling, interrupted-transfer path,
+> and rollback have not yet completed the physical-device checklist. Do not
+> treat simulator, host tests, or a successful ESP32 build as installed-hardware
+> verification.
+
 ## Test
 
 Core API and control safety tests run as a cross-platform Swift package:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,7 +20,11 @@ def test_identity_is_checked_in_and_example_is_generic_revision_zero() -> None:
     config = CONFIG.read_text(encoding="utf-8")
     identity = IDENTITY.read_text(encoding="utf-8")
 
-    assert '#define TREE_FIRMWARE_VERSION "0.6.0"' in identity
+    assert re.search(
+        r'^#define TREE_FIRMWARE_VERSION "(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"$',
+        identity,
+        re.MULTILINE,
+    )
     assert '#define TREE_FIRMWARE_TARGET "m5stack-atom"' in identity
     assert "FIRMWARE_VERSION" not in config
     assert "#define PROVISIONING_REVISION 0" in config
@@ -104,14 +109,33 @@ def test_pairing_key_is_generated_only_after_safe_window_and_never_logged() -> N
         "void handle_firmware_pair()",
         "void handle_firmware_challenge()",
     )
+    window = _function(
+        source,
+        "bool pairing_window_is_open(uint32_t now)",
+        "void consume_ota_nonce()",
+    )
 
     assert "pairing_window_is_open" in pair
-    assert "ota_safety_gate_is_open" in pair
+    assert "ota_safety_gate_is_open" in window
     assert "esp_fill_random" in pair
     assert "preferences.putString(kOtaKeyKey" in pair
     assert 'response["ota_key"]' in pair
     assert "Serial" not in pair
     assert "esp_fill_random" not in CONFIG.read_text(encoding="utf-8")
+
+
+def test_each_challenge_replaces_the_previous_nonce() -> None:
+    source = MAIN.read_text(encoding="utf-8")
+    challenge = _function(
+        source,
+        "void handle_firmware_challenge()",
+        "const char* ota_metadata_error_code(OtaMetadataError error)",
+    )
+
+    assert "esp_fill_random" in challenge
+    assert "ota_nonce = watering::encode_lower_hex" in challenge
+    assert "ota_nonce_issued_at = now" in challenge
+    assert "nonce_is_fresh_and_matching" not in challenge
 
 
 def test_invalid_signature_is_checked_before_flash_and_gate_is_cut_before_begin() -> None:
@@ -123,13 +147,14 @@ def test_invalid_signature_is_checked_before_flash_and_gate_is_cut_before_begin(
     )
 
     signature = "verify_ota_signature(metadata)"
+    nonce_check = "nonce_is_fresh_and_matching("
+    consume = "consume_ota_nonce();"
     cutoff = "pump_safety_gate.cutoff();"
     physical_low = "digitalWrite(PUMP_PIN, LOW);"
     update_begin = "Update.begin(metadata.size, U_FLASH)"
+    assert begin.index(nonce_check) < begin.index(consume) < begin.index(signature)
     assert begin.index(signature) < begin.index(cutoff)
     assert begin.index(cutoff) < begin.index(physical_low) < begin.index(update_begin)
-    assert "consume_ota_nonce();" in begin
-    assert begin.index(signature) < begin.index("consume_ota_nonce();")
 
 
 def test_stream_mismatch_aborts_before_update_end_and_reboot_is_delayed() -> None:
@@ -157,6 +182,31 @@ def test_stream_mismatch_aborts_before_update_end_and_reboot_is_delayed() -> Non
     assert "ESP.restart()" not in finalize
     assert "ota_restart_at" in source
     assert "ESP.restart();" in source
+
+
+def test_stalled_upload_is_aborted_and_releases_the_actuation_lock() -> None:
+    source = MAIN.read_text(encoding="utf-8")
+    begin = _function(
+        source,
+        "bool begin_ota_upload(HTTPUpload& upload)",
+        "void handle_firmware_upload()",
+    )
+    upload = _function(
+        source,
+        "void handle_firmware_upload()",
+        "void finalize_firmware_update()",
+    )
+    maintain = _function(
+        source,
+        "void maintain_ota_upload_timeout(uint32_t now)",
+        "void maintain_ota_boot_validation(uint32_t now)",
+    )
+
+    assert "ota_upload.last_activity_at = millis();" in begin
+    assert "ota_upload.last_activity_at = millis();" in upload
+    assert "ota_upload_has_stalled" in maintain
+    assert 'abort_ota_upload("upload_timeout")' in maintain
+    assert "maintain_ota_upload_timeout(now);" in source
 
 
 def test_pending_marker_keeps_boot_closed_and_rolls_back_unhealthy_first_boot() -> None:

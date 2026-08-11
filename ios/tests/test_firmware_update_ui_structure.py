@@ -43,6 +43,32 @@ class FirmwareUpdateUIStructureTests(unittest.TestCase):
         self.assertIn("role: .destructive", source)
         self.assertIn("model.currentFirmwareVersion", source)
         self.assertIn("model.availableFirmwareVersion", source)
+        self.assertIn("ファームウェアを送信しています", source)
+        self.assertIn("更新を確認しています", source)
+        self.assertIn("ペアリングしています", source)
+
+    def test_pairing_and_unsupported_capability_have_actionable_messages(self) -> None:
+        source = VIEW_MODEL.read_text(encoding="utf-8")
+        pair = self._function(
+            source,
+            "pairFirmwareUpdates()",
+            "checkForFirmwareUpdate()",
+        )
+        check = self._function(
+            source,
+            "checkForFirmwareUpdate()",
+            "installConfirmedFirmware()",
+        )
+        refresh = self._function(
+            source,
+            "refreshFirmwareCapability()",
+            "updateFirmwarePairingState(capability:",
+        )
+
+        self.assertIn("ATOMがペアリングを受け付けませんでした", pair)
+        self.assertIn("更新鍵をiPhoneに保存できませんでした", pair)
+        self.assertIn("この端末はOTA更新に対応していません", check)
+        self.assertIn("firmwareUpdateSupported", refresh)
 
     def test_firmware_update_gate_requires_idle_pump_off_and_no_control_operation(
         self,

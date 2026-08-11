@@ -173,6 +173,31 @@ final class AtomFirmwareAPIClientTests: XCTestCase {
         }
     }
 
+    func testUpdateRejectsMalformedAuthorizationBeforeSendingRequest() async throws {
+        let invalidPairs = [
+            (String(repeating: "AB", count: 32), String(repeating: "cd", count: 32)),
+            (String(repeating: "ab", count: 31), String(repeating: "cd", count: 32)),
+            (String(repeating: "ab", count: 32), String(repeating: "zz", count: 32)),
+        ]
+
+        for (nonce, signature) in invalidPairs {
+            do {
+                _ = try await client.updateFirmware(
+                    package: makeBinaryPackage(),
+                    nonce: nonce,
+                    signature: signature
+                )
+                XCTFail("Expected invalid authorization")
+            } catch {
+                XCTAssertEqual(
+                    error as? FirmwareValidationError,
+                    .invalidAuthorization
+                )
+            }
+        }
+        XCTAssertEqual(URLProtocolStub.requests.count, 0)
+    }
+
     func testUpdateRequiresAccepted202Response() async throws {
         URLProtocolStub.handler = { _ in
             .response(

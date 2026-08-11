@@ -60,6 +60,9 @@ OtaBootValidationDecision ota_boot_validation_decision(
     bool wifi_connected, bool watchdog_ready, State controller_state,
     bool actual_pump_high);
 bool bounded_deadline_is_in_future(uint32_t deadline, uint32_t now);
+bool ota_upload_has_stalled(bool update_active, bool ready_to_finalize,
+                            uint32_t last_activity_at, uint32_t now,
+                            uint32_t timeout_ms);
 bool nonce_is_fresh_and_matching(const std::string& expected,
                                  const std::string& provided,
                                  uint32_t issued_at, uint32_t now);

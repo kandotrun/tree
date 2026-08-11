@@ -99,6 +99,12 @@ void test_metadata_rejects_zero_or_oversized_firmware() {
       static_cast<int>(OtaMetadataError::InvalidSize),
       static_cast<int>(watering::validate_ota_metadata(
           metadata, "m5stack-atom", "0.6.0", 0x140000U)));
+
+  metadata = valid_metadata();
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(OtaMetadataError::InvalidSize),
+      static_cast<int>(watering::validate_ota_metadata(
+          metadata, "m5stack-atom", "0.6.0", 0U)));
 }
 
 void test_metadata_rejects_malformed_sha_nonce_and_signature() {
@@ -268,6 +274,24 @@ void test_bounded_deadline_rejects_zero_sentinel_and_survives_rollover() {
       49U, std::numeric_limits<uint32_t>::max() - 100U));
 }
 
+void test_ota_upload_timeout_requires_active_stalled_nonfinal_upload() {
+  TEST_ASSERT_FALSE(watering::ota_upload_has_stalled(
+      false, false, 100U, 30100U, 30000U));
+  TEST_ASSERT_FALSE(watering::ota_upload_has_stalled(
+      true, true, 100U, 30100U, 30000U));
+  TEST_ASSERT_FALSE(watering::ota_upload_has_stalled(
+      true, false, 100U, 30099U, 30000U));
+  TEST_ASSERT_TRUE(watering::ota_upload_has_stalled(
+      true, false, 100U, 30100U, 30000U));
+
+  const uint32_t before_rollover =
+      std::numeric_limits<uint32_t>::max() - 100U;
+  TEST_ASSERT_TRUE(watering::ota_upload_has_stalled(
+      true, false, before_rollover, 29899U, 30000U));
+  TEST_ASSERT_FALSE(watering::ota_upload_has_stalled(
+      true, false, before_rollover, 29899U, 0U));
+}
+
 }  // namespace
 
 int main(int, char**) {
@@ -289,5 +313,6 @@ int main(int, char**) {
   RUN_TEST(test_boot_validation_waits_until_health_window_expires);
   RUN_TEST(test_boot_validation_confirms_only_healthy_connected_firmware);
   RUN_TEST(test_bounded_deadline_rejects_zero_sentinel_and_survives_rollover);
+  RUN_TEST(test_ota_upload_timeout_requires_active_stalled_nonfinal_upload);
   return UNITY_END();
 }

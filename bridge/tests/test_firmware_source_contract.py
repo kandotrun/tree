@@ -20,10 +20,18 @@ FORBIDDEN_AUTH_MARKERS = (
 )
 
 
-def _handler_source(source: str, name: str, next_name: str) -> str:
+def _handler_source(source: str, name: str, _next_name: str) -> str:
     start = source.index(f"void {name}()")
-    end = source.index(f"void {next_name}()", start)
-    return source[start:end]
+    opening = source.index("{", start)
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+    raise AssertionError(f"unterminated handler: {name}")
 
 
 def test_watering_api_has_no_application_authentication() -> None:

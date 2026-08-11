@@ -32,6 +32,7 @@ OTAは給水設定を変更する経路ではありません。
 ATOMの通常の給水APIは、信頼済みLAN内でだけ使う設計です。
 OTAだけはファームウェアを書き換えられるため、物理pairingとHMAC認証を追加します。
 [M5Stack公式pin map](https://docs.m5stack.com/en/core/ATOM%20Lite)では、ATOM Liteの内蔵buttonはG39です。
+firmwareは`INPUT_PULLUP`のactive-lowとして扱いますが、3秒長押し検出は実機でまだ確認していません。
 
 更新アクセスのpairingは、次の条件をすべて満たす場合だけ受け付けます。
 
@@ -45,6 +46,8 @@ iOSアプリは鍵を端末名ごとにKeychainへ保存し、`WhenUnlockedThisD
 鍵を`UserDefaults`、ログ、repository、release assetへ書きません。
 
 pairing response自体はLAN内HTTPを通るため、共有Wi-Fi、guest network、直接Internetへ公開したATOMではpairingしません。
+この初期key transferにはTLSやPAKEがなく、同一L2 networkでpacket captureまたはARP spoofingできる第三者は更新鍵を取得できます。
+その脅威を許容できないnetworkではpairing/OTAを使わず、USB recovery/provisioningを使います。
 物理buttonは、この短いpairing windowを第三者が任意に開けないようにするための条件です。
 
 ## 更新手順

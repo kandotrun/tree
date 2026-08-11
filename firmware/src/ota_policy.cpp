@@ -168,6 +168,13 @@ bool bounded_deadline_is_in_future(uint32_t deadline, uint32_t now) {
   return deadline != 0U && static_cast<int32_t>(deadline - now) > 0;
 }
 
+bool ota_upload_has_stalled(bool update_active, bool ready_to_finalize,
+                            uint32_t last_activity_at, uint32_t now,
+                            uint32_t timeout_ms) {
+  return update_active && !ready_to_finalize && timeout_ms > 0U &&
+         now - last_activity_at >= timeout_ms;
+}
+
 bool nonce_is_fresh_and_matching(const std::string& expected,
                                  const std::string& provided,
                                  uint32_t issued_at, uint32_t now) {
