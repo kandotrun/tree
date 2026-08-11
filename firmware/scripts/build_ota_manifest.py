@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import NoReturn
 
 MAX_OTA_PARTITION_BYTES = 0x140000
+MAX_VERSION_COMPONENT = (1 << 32) - 1
 SEMVER = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 SHA1 = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -33,6 +34,10 @@ def main() -> None:
     args = parse_args()
     if SEMVER.fullmatch(args.version) is None:
         fail("firmware version must use canonical x.y.z syntax")
+    if any(
+        int(component) > MAX_VERSION_COMPONENT for component in args.version.split(".")
+    ):
+        fail("firmware version components must fit unsigned 32-bit integers")
     if SHA1.fullmatch(args.source_sha) is None:
         fail("source SHA must be 40 lowercase hexadecimal characters")
     try:

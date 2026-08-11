@@ -70,8 +70,8 @@ class FirmwareUpdateUIStructureTests(unittest.TestCase):
             "refreshFirmwareCapability()",
         )
 
-        challenge = "createFirmwareChallenge"
-        upload = "installFirmware"
+        challenge = "requestFirmwareChallenge"
+        upload = "updateFirmware"
         self.assertLess(install.index(challenge), install.index(upload))
         self.assertEqual(install.count(upload), 1)
         self.assertNotIn("while ", install)
@@ -83,7 +83,7 @@ class FirmwareUpdateUIStructureTests(unittest.TestCase):
         source = VIEW_MODEL.read_text(encoding="utf-8")
         activate = self._function(source, "activate()", "handleSceneInactive()")
 
-        self.assertNotIn("installFirmware", activate)
+        self.assertNotIn("updateFirmware", activate)
         self.assertNotIn("checkForFirmwareUpdate", activate)
         self.assertNotIn("pairFirmwareUpdates", activate)
 

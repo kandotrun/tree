@@ -67,6 +67,14 @@ def test_manifest_rejects_noncanonical_version(tmp_path: Path) -> None:
     assert "x.y.z" in result.stderr
 
 
+def test_manifest_rejects_version_component_larger_than_uint32(tmp_path: Path) -> None:
+    result, output = _run_manifest(tmp_path, version="4294967296.0.0")
+
+    assert result.returncode != 0
+    assert not output.exists()
+    assert "32-bit" in result.stderr
+
+
 def test_manifest_rejects_image_that_cannot_fit_an_ota_partition(tmp_path: Path) -> None:
     result, output = _run_manifest(tmp_path, size=0x140000 + 1)
 
