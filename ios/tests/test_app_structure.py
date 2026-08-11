@@ -101,6 +101,26 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn(".trim(from: 0, to: remainingFraction)", status)
         self.assertIn(".rotationEffect(.degrees(-90))", status)
 
+    def test_unarmed_idle_status_explains_why_watering_controls_are_disabled(
+        self,
+    ) -> None:
+        dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
+            encoding="utf-8"
+        )
+        theme = (IOS_ROOT / "TreeWatering/Design/Theme.swift").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("model.status?.wateringAvailability.japaneseTitle", dashboard)
+        self.assertIn("model.status?.wateringAvailability.japaneseDetail", dashboard)
+        self.assertNotIn("model.status?.state.japaneseTitle", dashboard)
+        self.assertNotIn("model.status?.state.japaneseDetail", dashboard)
+        self.assertIn("extension WateringAvailability", theme)
+        self.assertIn('case .unarmed: "給水は無効です"', theme)
+        self.assertIn('case .unarmed: "実機テスト後に端末を有効化してください"', theme)
+        self.assertIn("model.status?.wateringAvailability == .unarmed", dashboard)
+        self.assertIn('"端末が未アームです"', dashboard)
+
     def test_discovery_validates_read_only_status_before_saving(self) -> None:
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
             encoding="utf-8"

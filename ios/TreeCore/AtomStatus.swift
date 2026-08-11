@@ -8,6 +8,15 @@ public enum AtomState: Equatable, Sendable {
     case unknown(String)
 }
 
+public enum WateringAvailability: Equatable, Sendable {
+    case bootGuard
+    case ready
+    case unarmed
+    case watering
+    case error
+    case unknown
+}
+
 extension AtomState: Codable {
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
@@ -57,6 +66,22 @@ public struct AtomStatus: Codable, Equatable, Sendable {
     public let lastStopReason: String
     public let firmwareVersion: String
     public let errorReason: String?
+
+    public var wateringAvailability: WateringAvailability {
+        switch state {
+        case .bootGuard:
+            return .bootGuard
+        case .idle:
+            guard armed else { return .unarmed }
+            return pump ? .unknown : .ready
+        case .watering:
+            return .watering
+        case .error:
+            return .error
+        case .unknown:
+            return .unknown
+        }
+    }
 
     public var canStartWatering: Bool {
         state == .idle && pump == false && armed

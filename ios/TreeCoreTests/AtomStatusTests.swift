@@ -43,6 +43,17 @@ final class AtomStatusTests: XCTestCase {
         XCTAssertFalse(status.isCompatibleDiscoveryTarget)
     }
 
+    func testIdleUnarmedStatusReportsUnarmedAvailability() throws {
+        let payload = Data(
+            #"{"state":"IDLE","pump":false,"uptime_ms":1,"wifi_rssi":-59,"moisture_adc":2624,"armed":false,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":10000,"watering_mode":"NONE","hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"last_request_id":"","remaining_ms":0,"last_runtime_ms":0,"last_stop_reason":"","firmware_version":"0.5.0"}"#.utf8
+        )
+
+        let status = try JSONDecoder().decode(AtomStatus.self, from: payload)
+
+        XCTAssertEqual(status.wateringAvailability, .unarmed)
+        XCTAssertFalse(status.canStartWatering)
+    }
+
     func testUnknownFirmwareStateRemainsRepresentable() throws {
         let payload = Data(
             #"{"state":"FUTURE_STATE","pump":false,"uptime_ms":1,"wifi_rssi":-70,"moisture_adc":1700,"armed":false,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":0,"watering_mode":"NONE","hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"last_request_id":"","remaining_ms":0,"last_runtime_ms":0,"last_stop_reason":"","firmware_version":"0.5.0"}"#.utf8

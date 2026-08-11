@@ -162,7 +162,7 @@ private struct StatusCard: View {
         case .unconfigured: "接続先が未設定です"
         case .connecting: "端末を探しています"
         case .offline: "端末に接続できません"
-        case .online: model.status?.state.japaneseTitle ?? "状態を取得中"
+        case .online: model.status?.wateringAvailability.japaneseTitle ?? "状態を取得中"
         }
     }
 
@@ -171,7 +171,7 @@ private struct StatusCard: View {
         case .unconfigured: "設定から端末アドレスを入力してください"
         case .connecting: "同じWi-Fiにいるか確認しています"
         case .offline: "電源・Wi-Fi・端末アドレスを確認してください"
-        case .online: model.status?.state.japaneseDetail ?? "少し待ってください"
+        case .online: model.status?.wateringAvailability.japaneseDetail ?? "少し待ってください"
         }
     }
 }
@@ -339,6 +339,12 @@ private struct HoldCard: View {
         model.canStartWatering || model.holdGestureActive || model.holdStartInFlight || model.holdActive
     }
 
+    private var unavailableMessage: String {
+        model.status?.wateringAvailability == .unarmed
+            ? "端末が未アームです"
+            : "状態確認後に操作できます"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("微調整")
@@ -355,7 +361,7 @@ private struct HoldCard: View {
                     Text(
                         model.holdStartInFlight
                             ? "開始を確認中…"
-                            : (acceptsTouch ? "離すとすぐ停止" : "状態確認後に操作できます")
+                            : (acceptsTouch ? "離すとすぐ停止" : unavailableMessage)
                     )
                         .font(.caption.weight(.medium))
                         .opacity(acceptsTouch ? 0.68 : 1)
