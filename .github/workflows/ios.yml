@@ -72,6 +72,30 @@ jobs:
           xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview-watering
           sleep 2
           xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-watering.png
+          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview-settings
+          sleep 2
+          xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-settings.png
+          xcrun simctl ui "$simulator_id" appearance dark
+          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview
+          sleep 2
+          xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-dashboard-dark.png
+          xcrun simctl ui "$simulator_id" appearance light
+          xcrun simctl ui "$simulator_id" content_size accessibility-extra-extra-extra-large
+          xcodebuild \
+            -project ios/TreeWatering.xcodeproj \
+            -scheme TreeWatering \
+            -destination "platform=iOS Simulator,id=$simulator_id" \
+            -only-testing:TreeWateringUITests \
+            test
+          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview
+          sleep 2
+          xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-dashboard-ax5.png
+          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview-watering
+          sleep 2
+          xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-watering-ax5.png
+          xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview-settings
+          sleep 2
+          xcrun simctl io "$simulator_id" screenshot ios/build/TreeWatering-settings-ax5.png
           ditto -c -k --sequesterRsrc --keepParent "$app_path" ios/build/TreeWatering-simulator.zip
           xcrun simctl shutdown "$simulator_id"
       - name: Upload simulator app and screenshot
@@ -83,6 +107,11 @@ jobs:
             ios/build/TreeWatering-setup.png
             ios/build/TreeWatering-dashboard.png
             ios/build/TreeWatering-watering.png
+            ios/build/TreeWatering-settings.png
+            ios/build/TreeWatering-dashboard-dark.png
+            ios/build/TreeWatering-dashboard-ax5.png
+            ios/build/TreeWatering-watering-ax5.png
+            ios/build/TreeWatering-settings-ax5.png
             ios/build.log
           if-no-files-found: error
           retention-days: 14

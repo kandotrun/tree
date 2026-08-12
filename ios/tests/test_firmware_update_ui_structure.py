@@ -34,7 +34,8 @@ class FirmwareUpdateUIStructureTests(unittest.TestCase):
     ) -> None:
         source = SETTINGS.read_text(encoding="utf-8")
 
-        self.assertIn("ファームウェア更新", source)
+        self.assertIn('Text("ファームウェア")', source)
+        self.assertIn("ファームウェア", source)
         self.assertIn("ATOM本体のボタン", source)
         self.assertIn("更新アクセスをペアリング", source)
         self.assertIn("更新を確認", source)

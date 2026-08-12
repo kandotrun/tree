@@ -66,9 +66,10 @@ class IOSAppStructureTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("端末を探しています", setup)
+        self.assertIn("デバイスを検索中", setup)
         self.assertIn("もう一度探す", setup)
-        self.assertIn("手動で設定", setup)
+        self.assertIn("デバイスのアドレスを入力", setup)
+        self.assertIn("private struct ManualEndpointView", setup)
         self.assertIn("func startDiscovery()", view_model)
         self.assertIn("guard api == nil", view_model)
         self.assertIn("startDiscovery()", view_model[view_model.index("func activate()") :])
@@ -83,20 +84,20 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertNotIn("検索はローカルネットワーク内だけで行います", setup)
         self.assertIn("Text(model.discoveryMessage)", setup)
 
-    def test_watering_countdown_keeps_seconds_and_adds_progress_ring(self) -> None:
+    def test_watering_countdown_keeps_seconds_and_system_progress(self) -> None:
         dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
             encoding="utf-8"
         )
         status = dashboard[
-            dashboard.index("private struct StatusCard") : dashboard.index(
-                "private struct MetricTile"
+            dashboard.index("private struct DeviceStatusHeader") : dashboard.index(
+                "private struct WateringControlsSection"
             )
         ]
 
-        self.assertIn('Text("あと約 \\(max(1,', status)
+        self.assertIn('Text("残り \\(remainingSeconds)秒")', status)
         self.assertIn("WateringCountdownProgress.remainingFraction", status)
-        self.assertIn(".trim(from: 0, to: remainingFraction)", status)
-        self.assertIn(".rotationEffect(.degrees(-90))", status)
+        self.assertIn("ProgressView(value: remainingFraction)", status)
+        self.assertIn(".monospacedDigit()", status)
 
     def test_unarmed_idle_status_explains_why_watering_controls_are_disabled(
         self,
@@ -108,8 +109,9 @@ class IOSAppStructureTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("model.status?.wateringAvailability.japaneseTitle", dashboard)
-        self.assertIn("model.status?.wateringAvailability.japaneseDetail", dashboard)
+        self.assertIn("model.status?.wateringAvailability", dashboard)
+        self.assertIn("availability?.japaneseTitle", dashboard)
+        self.assertIn("availability?.japaneseDetail", dashboard)
         self.assertNotIn("model.status?.state.japaneseTitle", dashboard)
         self.assertNotIn("model.status?.state.japaneseDetail", dashboard)
         self.assertIn("extension WateringAvailability", theme)
@@ -118,7 +120,7 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn("model.status?.wateringAvailability == .unarmed", dashboard)
         self.assertIn('"端末が未アームです"', dashboard)
 
-    def test_unarmed_availability_drives_status_orb_tint(self) -> None:
+    def test_unarmed_availability_drives_status_symbol_and_tint(self) -> None:
         dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
             encoding="utf-8"
         )
@@ -126,32 +128,31 @@ class IOSAppStructureTests(unittest.TestCase):
             encoding="utf-8"
         )
         status = dashboard[
-            dashboard.index("private struct StatusCard") : dashboard.index(
-                "private struct MetricTile"
+            dashboard.index("private struct DeviceStatusHeader") : dashboard.index(
+                "private struct WateringControlsSection"
             )
         ]
 
-        self.assertIn("availability: model.status?.wateringAvailability", status)
-        self.assertIn("let availability: WateringAvailability?", status)
-        self.assertIn("return availability?.tint ?? .orange", status)
+        self.assertIn("private var availability: WateringAvailability?", status)
+        self.assertIn("model.status?.wateringAvailability", status)
+        self.assertIn("availability?.tint ?? .secondary", status)
         self.assertIn("availability == .watering", status)
         self.assertNotIn("state: model.status?.state", status)
-        self.assertIn("case .unarmed: .orange", theme)
+        self.assertIn("case .unarmed, .bootGuard, .unknown: .orange", theme)
 
     def test_disabled_hold_control_exposes_unavailable_accessibility_hint(self) -> None:
         dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
             encoding="utf-8"
         )
         hold = dashboard[
-            dashboard.index("private struct HoldCard") : dashboard.index(
-                "private struct StopCard"
+            dashboard.index("private struct HoldControlSection") : dashboard.index(
+                "private struct DeviceInfoView"
             )
         ]
 
-        self.assertIn(
-            '.accessibilityHint(acceptsTouch ? "画面を押している間だけポンプが動きます" : unavailableMessage)',
-            hold,
-        )
+        self.assertIn(".accessibilityHint(", hold)
+        self.assertIn('"画面を押している間だけポンプが動きます"', hold)
+        self.assertIn(": unavailableMessage", hold)
 
     def test_discovery_validates_read_only_status_before_saving(self) -> None:
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
@@ -176,7 +177,7 @@ class IOSAppStructureTests(unittest.TestCase):
             for path in sorted((IOS_ROOT / "TreeWatering").rglob("*.swift"))
         )
 
-        self.assertIn("今すぐ停止", source)
+        self.assertIn("給水を停止", source)
         self.assertIn("押している間だけ給水", source)
         self.assertIn("給水を開始しますか", source)
         self.assertIn("scenePhase", source)
@@ -208,7 +209,7 @@ class IOSAppStructureTests(unittest.TestCase):
         self.assertIn("Xcode 26", readme)
         self.assertIn("iOS 26 or later", readme)
 
-    def test_primary_surfaces_use_native_liquid_glass_apis(self) -> None:
+    def test_primary_surfaces_use_native_ios_controls(self) -> None:
         sources = "\n".join(
             (IOS_ROOT / relative_path).read_text(encoding="utf-8")
             for relative_path in [
@@ -218,23 +219,23 @@ class IOSAppStructureTests(unittest.TestCase):
             ]
         )
 
-        self.assertIn("GlassEffectContainer", sources)
-        self.assertGreaterEqual(sources.count(".glassEffect("), 4)
-        self.assertIn(".buttonStyle(.glass)", sources)
-        self.assertIn(".buttonStyle(.glassProminent)", sources)
+        self.assertIn("ContentUnavailableView", sources)
+        self.assertIn("NavigationStack", sources)
+        self.assertIn("List {", sources)
+        self.assertIn(".buttonStyle(.borderedProminent)", sources)
+        self.assertNotIn("GlassEffectContainer", sources)
+        self.assertNotIn(".glassEffect(", sources)
 
-    def test_content_cards_avoid_glass_on_glass(self) -> None:
+    def test_theme_uses_semantic_system_surfaces(self) -> None:
         theme = (IOS_ROOT / "TreeWatering/Design/Theme.swift").read_text(
             encoding="utf-8"
         )
-        card = theme[
-            theme.index("struct TreeCardModifier") : theme.index("extension View")
-        ]
+        self.assertIn("static let treeAccent", theme)
+        self.assertNotIn("TreeCardModifier", theme)
+        self.assertNotIn("Color.white.opacity", theme)
+        self.assertNotIn("LinearGradient", theme)
 
-        self.assertNotIn(".glassEffect(", card)
-        self.assertIn(".background(Color.white.opacity(0.72))", card)
-
-    def test_settings_uses_system_toolbar_glass_without_nested_button_styles(self) -> None:
+    def test_settings_uses_system_toolbar_without_nested_button_styles(self) -> None:
         settings = (IOS_ROOT / "TreeWatering/Features/SettingsView.swift").read_text(
             encoding="utf-8"
         )
@@ -242,18 +243,18 @@ class IOSAppStructureTests(unittest.TestCase):
 
         self.assertNotIn(".buttonStyle(.glass", toolbar)
 
-    def test_hold_control_uses_interactive_glass_and_preserves_hold_gesture(self) -> None:
+    def test_hold_control_preserves_press_and_release_gesture(self) -> None:
         dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
             encoding="utf-8"
         )
         hold = dashboard[
-            dashboard.index("private struct HoldCard") : dashboard.index(
-                "private struct StopCard"
+            dashboard.index("private struct HoldControlSection") : dashboard.index(
+                "private struct DeviceInfoView"
             )
         ]
 
-        self.assertIn(".glassEffect(", hold)
-        self.assertIn(".interactive(acceptsTouch)", hold)
+        self.assertNotIn(".glassEffect(", hold)
+        self.assertIn(".opacity(acceptsTouch ? 1 : 0.5)", hold)
         self.assertIn("DragGesture(minimumDistance: 0)", hold)
         self.assertIn("model.holdGestureBegan()", hold)
         self.assertIn("model.holdGestureEnded()", hold)
@@ -263,14 +264,14 @@ class IOSAppStructureTests(unittest.TestCase):
             encoding="utf-8"
         )
         stop = dashboard[
-            dashboard.index("private struct StopCard") : dashboard.index(
-                "private struct NoticeBanner"
+            dashboard.index("private struct EmergencyStopBar") : dashboard.index(
+                "private struct InlineNotice"
             )
         ]
 
-        self.assertIn(".background(Color.treeWarning)", stop)
-        self.assertIn(".clipShape(", stop)
-        self.assertIn("Text(\"今すぐ停止\")", stop)
+        self.assertIn(".background(.bar)", stop)
+        self.assertIn(".tint(.red)", stop)
+        self.assertIn("Text(\"給水を停止\")", stop)
         self.assertNotIn(".glassEffect(", stop)
         self.assertNotIn(".buttonStyle(.glass", stop)
         self.assertNotIn(".disabled(model.isStopping)", stop)
@@ -339,31 +340,26 @@ class IOSAppStructureTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn(".safeAreaInset(edge: .bottom", dashboard)
-        scroll_start = dashboard.index("LazyVStack")
-        scroll_end = dashboard.index(".refreshable")
+        scroll_start = dashboard.index("List {")
+        scroll_end = dashboard.index(".listStyle(")
         inset_index = dashboard.index(".safeAreaInset(edge: .bottom")
-        toolbar_index = dashboard.index(".toolbar(.hidden")
-        self.assertLess(inset_index, toolbar_index)
-        self.assertNotIn("StopCard(model: model)", dashboard[scroll_start:scroll_end])
-        self.assertIn(
-            ".padding(.bottom, model.shouldShowStop ? 136 : 28)",
-            dashboard,
-        )
+        self.assertGreater(inset_index, scroll_end)
+        self.assertNotIn("EmergencyStopBar(model: model)", dashboard[scroll_start:scroll_end])
+        self.assertIn("EmergencyStopBar(model: model)", dashboard[inset_index:])
 
-    def test_disabled_dose_action_uses_readable_dark_foreground(self) -> None:
+    def test_disabled_dose_action_uses_native_disabled_appearance(self) -> None:
         dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
             encoding="utf-8"
         )
         dose = dashboard[
-            dashboard.index("private struct DoseCard") : dashboard.index(
-                "private struct HoldCard"
+            dashboard.index("private struct WateringControlsSection") : dashboard.index(
+                "private struct HoldControlSection"
             )
         ]
 
-        self.assertIn(
-            "model.canStartWatering ? Color.white : Color.treeInk",
-            dose,
-        )
+        self.assertIn(".buttonStyle(.borderedProminent)", dose)
+        self.assertIn(".disabled(!model.canStartWatering)", dose)
+        self.assertNotIn("foregroundStyle", dose)
 
     def test_manual_stop_invalidates_pending_hold_completion(self) -> None:
         view_model = (IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift").read_text(
@@ -573,7 +569,7 @@ class IOSAppStructureTests(unittest.TestCase):
 
     def test_endpoint_input_placeholders_include_required_scheme_and_contrast(self) -> None:
         placeholder = 'prompt: Text("例：http://<ATOMのLAN内IP>")'
-        contrast = ".foregroundStyle(Color.treeInk.opacity(0.55))"
+        contrast = ".foregroundStyle(.secondary)"
         for relative_path in [
             "TreeWatering/Features/SetupView.swift",
             "TreeWatering/Features/SettingsView.swift",
@@ -582,26 +578,21 @@ class IOSAppStructureTests(unittest.TestCase):
             self.assertIn(placeholder, source)
             self.assertIn(contrast, source)
 
-    def test_glass_backdrop_has_structured_water_and_leaf_shapes(self) -> None:
+    def test_theme_does_not_add_decorative_scene_chrome(self) -> None:
         theme = (IOS_ROOT / "TreeWatering/Design/Theme.swift").read_text(
             encoding="utf-8"
         )
-        backdrop = theme[
-            theme.index("struct TreeGlassBackdrop") : theme.index(
-                "struct TreeCardModifier"
-            )
-        ]
+        self.assertNotIn("TreeGlassBackdrop", theme)
+        self.assertNotIn("GeometryReader", theme)
+        self.assertNotIn("LinearGradient", theme)
 
-        self.assertIn('Image(systemName: "drop.fill")', backdrop)
-        self.assertIn('Image(systemName: "leaf.fill")', backdrop)
-
-    def test_tertiary_labels_keep_readable_contrast(self) -> None:
+    def test_secondary_labels_use_semantic_contrast(self) -> None:
         dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("Color.treeInk.opacity(0.58)", dashboard)
-        self.assertIn("Color.treeInk.opacity(0.62)", dashboard)
+        self.assertGreaterEqual(dashboard.count(".foregroundStyle(.secondary)"), 4)
+        self.assertNotIn("Color.treeInk.opacity", dashboard)
 
     def test_hold_safety_copy_avoids_orphaned_ending(self) -> None:
         dashboard = (IOS_ROOT / "TreeWatering/Features/DashboardView.swift").read_text(

@@ -16,7 +16,7 @@ class TestTestFlightConfig(unittest.TestCase):
         self.assertIn('CFBundleShortVersionString: "$(MARKETING_VERSION)"', project)
         self.assertIn('CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"', project)
         self.assertIn('MARKETING_VERSION: "1.0.0"', project)
-        self.assertIn('CURRENT_PROJECT_VERSION: "2"', project)
+        self.assertIn('CURRENT_PROJECT_VERSION: "3"', project)
         self.assertIn("DEVELOPMENT_TEAM: UGNVGWZMAU", project)
 
     def test_project_builds_app_store_resources(self) -> None:

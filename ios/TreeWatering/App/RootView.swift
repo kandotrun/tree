@@ -11,7 +11,7 @@ struct RootView: View {
                 SetupView(model: model)
             }
         }
-        .preferredColorScheme(.light)
+        .tint(Color.treeAccent)
         .sheet(isPresented: $model.showSettings) {
             SettingsView(model: model)
         }

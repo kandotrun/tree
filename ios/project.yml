@@ -65,10 +65,27 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "2"
+        CURRENT_PROJECT_VERSION: "3"
         DEVELOPMENT_TEAM: UGNVGWZMAU
         MARKETING_VERSION: "1.0.0"
         SUPPORTS_MACCATALYST: false
+        TARGETED_DEVICE_FAMILY: "1"
+
+  TreeWateringUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: TreeWateringUITests
+    dependencies:
+      - target: TreeWatering
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: run.kan.treewatering.uitests
+        SWIFT_VERSION: "5.10"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: UGNVGWZMAU
+        GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
@@ -76,6 +93,11 @@ schemes:
     build:
       targets:
         TreeWatering: all
+        TreeWateringUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - TreeWateringUITests
     run:
       config: Debug
     archive:

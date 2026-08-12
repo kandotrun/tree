@@ -43,7 +43,7 @@ final class DashboardViewModel: ObservableObject {
     @Published private(set) var holdActive = false
     @Published private(set) var stopRecommended = false
     @Published private(set) var isDiscovering = false
-    @Published private(set) var discoveryMessage = "同じWi-Fi内を検索中です…"
+    @Published private(set) var discoveryMessage = "同じWi-Fi上のデバイスを検索しています…"
     @Published private(set) var firmwareCapability: FirmwareCapability?
     @Published private(set) var firmwareUpdateMessage: String?
     @Published private(set) var isFirmwarePaired = false
@@ -79,12 +79,15 @@ final class DashboardViewModel: ObservableObject {
 #if DEBUG
         let setupPreview = ProcessInfo.processInfo.arguments.contains("-ui-preview-setup")
         let wateringPreview = ProcessInfo.processInfo.arguments.contains("-ui-preview-watering")
+        let settingsPreview = ProcessInfo.processInfo.arguments.contains("-ui-preview-settings")
         let previewMode = setupPreview
             || wateringPreview
+            || settingsPreview
             || ProcessInfo.processInfo.arguments.contains("-ui-preview")
 #else
         let setupPreview = false
         let wateringPreview = false
+        let settingsPreview = false
         let previewMode = false
 #endif
         isPreviewMode = previewMode
@@ -95,7 +98,7 @@ final class DashboardViewModel: ObservableObject {
             return
         }
         if previewMode,
-           let endpoint = try? DeviceEndpoint("http://127.0.0.1") {
+           let endpoint = try? DeviceEndpoint("http://balcony-watering.local") {
             endpointInput = endpoint.baseURL.absoluteString
             install(endpoint: endpoint)
             status = wateringPreview
@@ -103,6 +106,7 @@ final class DashboardViewModel: ObservableObject {
                 : Self.makePreviewStatus()
             stopRecommended = wateringPreview
             connectionState = .online
+            showSettings = settingsPreview
             return
         }
         let saved = defaults.string(forKey: Self.endpointDefaultsKey) ?? ""
@@ -181,6 +185,10 @@ final class DashboardViewModel: ObservableObject {
             || holdActive
     }
 
+    var shouldKeepHoldControlVisible: Bool {
+        holdGestureActive || holdStartInFlight || holdActive
+    }
+
     var canAttemptEndpointChange: Bool {
         !isActionInFlight
             && !isStopping
@@ -194,12 +202,16 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func saveEndpoint() -> Bool {
+        saveEndpoint(endpointInput)
+    }
+
+    func saveEndpoint(_ proposedValue: String) -> Bool {
         guard canAttemptEndpointChange else {
             endpointValidationMessage = "給水操作が完了してから接続先を変更してください"
             return false
         }
         do {
-            let endpoint = try DeviceEndpoint(endpointInput)
+            let endpoint = try DeviceEndpoint(proposedValue)
             if shouldShowStop {
                 guard connectionState == .offline else {
                     endpointValidationMessage = "停止を確認してから接続先を変更してください"
@@ -215,6 +227,10 @@ final class DashboardViewModel: ObservableObject {
             endpointValidationMessage = endpointErrorMessage(error)
             return false
         }
+    }
+
+    func clearEndpointValidationMessage() {
+        endpointValidationMessage = nil
     }
 
     func confirmOfflineEndpointChange() -> Bool {
@@ -248,7 +264,7 @@ final class DashboardViewModel: ObservableObject {
         stopDiscovery(invalidate: true)
         let generationAtStart = discoveryGeneration
         isDiscovering = true
-        discoveryMessage = "同じWi-Fi内を検索中です…"
+        discoveryMessage = "同じWi-Fi上のデバイスを検索しています…"
         endpointValidationMessage = nil
 
         discovery.start(
@@ -474,6 +490,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func refreshFirmwareCapability() {
+        guard !isPreviewMode else { return }
         guard isOnline,
               firmwareUpdateSupported,
               !isFirmwareUpdateInFlight,
@@ -624,7 +641,7 @@ final class DashboardViewModel: ObservableObject {
         guard discoveryGeneration == generation, api == nil else { return }
         switch state {
         case .ready:
-            discoveryMessage = "同じWi-Fi内を検索中です…"
+            discoveryMessage = "同じWi-Fi上のデバイスを検索しています…"
         case .waiting:
             discoveryMessage = "ローカルネットワークの許可を確認しています…"
         case .failed:
@@ -937,12 +954,12 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private static func makePreviewStatus() -> AtomStatus? {
-        let data = Data(#"{"state":"IDLE","pump":false,"armed":true,"watering_mode":"NONE","moisture_adc":1688,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":0,"remaining_ms":0,"hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"uptime_ms":571900,"wifi_rssi":-54,"firmware_version":"0.4.1","last_request_id":"preview","last_runtime_ms":0,"last_stop_reason":"NONE","error_reason":null}"#.utf8)
+        let data = Data(#"{"state":"IDLE","pump":false,"armed":true,"watering_mode":"NONE","moisture_adc":1688,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":0,"remaining_ms":0,"hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"uptime_ms":571900,"wifi_rssi":-54,"firmware_version":"0.6.0","ota_supported":true,"device_name":"balcony-watering","last_request_id":"preview","last_runtime_ms":0,"last_stop_reason":"NONE","error_reason":null}"#.utf8)
         return try? JSONDecoder().decode(AtomStatus.self, from: data)
     }
 
     private static func makeWateringPreviewStatus() -> AtomStatus? {
-        let data = Data(#"{"state":"WATERING","pump":true,"armed":true,"watering_mode":"TIMED","moisture_adc":1688,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":10000,"remaining_ms":6500,"hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"uptime_ms":575400,"wifi_rssi":-54,"firmware_version":"0.4.1","last_request_id":"preview-water","last_runtime_ms":0,"last_stop_reason":"NONE","error_reason":null}"#.utf8)
+        let data = Data(#"{"state":"WATERING","pump":true,"armed":true,"watering_mode":"TIMED","moisture_adc":1688,"default_duration_sec":10,"max_duration_sec":180,"scheduled_ms":10000,"remaining_ms":6500,"hold_lease_ms":1500,"hold_max_run_ms":600000,"hold_lease_remaining_ms":0,"uptime_ms":575400,"wifi_rssi":-54,"firmware_version":"0.6.0","ota_supported":true,"device_name":"balcony-watering","last_request_id":"preview-water","last_runtime_ms":0,"last_stop_reason":"NONE","error_reason":null}"#.utf8)
         return try? JSONDecoder().decode(AtomStatus.self, from: data)
     }
 }
