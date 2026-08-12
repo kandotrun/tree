@@ -3,132 +3,130 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var model: DashboardViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var endpointDraft: String
     @FocusState private var endpointFocused: Bool
+
+    init(model: DashboardViewModel) {
+        self.model = model
+        _endpointDraft = State(initialValue: model.endpointInput)
+    }
+
+    private var endpointChanged: Bool {
+        endpointDraft != model.endpointInput
+    }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                TreeGlassBackdrop()
+            Form {
+                Section("接続") {
+                    TextField(
+                        "端末アドレス",
+                        text: $endpointDraft,
+                        prompt: Text("例：http://<ATOMのLAN内IP>")
+                            .foregroundStyle(.secondary)
+                    )
+                    .font(.system(.body, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .focused($endpointFocused)
+                    .onChange(of: endpointDraft) {
+                        model.clearEndpointValidationMessage()
+                    }
 
-                Form {
-                    Section {
-                        TextField(
-                            "",
-                            text: $model.endpointInput,
-                            prompt: Text("例：http://<ATOMのLAN内IP>")
-                                .foregroundStyle(Color.treeInk.opacity(0.55))
+                    if let message = model.endpointValidationMessage {
+                        Label(message, systemImage: "exclamationmark.circle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+
+                    LabeledContent("接続方式", value: "ローカルネットワーク")
+                }
+
+                Section {
+                    LabeledContent("ファームウェア", value: model.currentFirmwareVersion)
+
+                    if model.firmwareUpdateSupported {
+                        Label(
+                            model.isFirmwarePaired ? "更新アクセス設定済み" : "更新アクセス未設定",
+                            systemImage: model.isFirmwarePaired
+                                ? "lock.shield.fill"
+                                : "lock.open.fill"
                         )
-                            .font(.system(.body, design: .monospaced))
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.URL)
-                            .focused($endpointFocused)
 
-                        if let message = model.endpointValidationMessage {
-                            Label(message, systemImage: "exclamationmark.circle.fill")
-                                .font(.footnote)
-                                .foregroundStyle(Color.treeWarning)
+                        Button(
+                            model.isFirmwarePaired
+                                ? "更新アクセスを再設定"
+                                : "更新アクセスをペアリング"
+                        ) {
+                            model.pairFirmwareUpdates()
                         }
-                    } header: {
-                        Text("端末アドレス")
-                    } footer: {
-                        Text("private IPまたは.localホスト名のみ保存できます。認証情報やパスは入力しません。")
-                    }
+                        .disabled(
+                            !model.canManageFirmware
+                                || model.isFirmwarePairingInFlight
+                                || model.isFirmwareUpdateInFlight
+                        )
 
-                    Section("接続方式") {
-                        Label("LAN内で端末へ直接接続", systemImage: "wifi.router")
-                        Label("クラウド通信なし", systemImage: "icloud.slash")
-                        Label("給水操作はアカウント不要", systemImage: "person.crop.circle.badge.xmark")
-                    }
+                        Button("更新を確認") {
+                            model.checkForFirmwareUpdate()
+                        }
+                        .disabled(
+                            !model.canManageFirmware
+                                || model.isCheckingFirmwareUpdate
+                                || model.isFirmwareUpdateInFlight
+                        )
 
-                    Section {
-                        LabeledContent("現在", value: model.currentFirmwareVersion)
-
-                        if model.firmwareUpdateSupported {
-                            Label(
-                                model.isFirmwarePaired ? "更新アクセス設定済み" : "更新アクセス未設定",
-                                systemImage: model.isFirmwarePaired
-                                    ? "lock.shield.fill"
-                                    : "lock.open.fill"
+                        if let version = model.availableFirmwareVersion {
+                            LabeledContent("利用可能", value: version)
+                            Button("ファームウェア \(version) へ更新") {
+                                model.requestFirmwareUpdateConfirmation()
+                            }
+                            .disabled(
+                                !model.canManageFirmware
+                                    || !model.isFirmwarePaired
+                                    || model.isFirmwareUpdateInFlight
                             )
+                        }
 
-                            Text("ATOM本体のボタンを3秒間押し、60秒以内にペアリングします。")
+                        if model.isFirmwarePairingInFlight
+                            || model.isCheckingFirmwareUpdate
+                            || model.isFirmwareUpdateInFlight {
+                            ProgressView(firmwareProgressLabel)
+                                .accessibilityLabel(firmwareProgressLabel)
+                        }
+
+                        if let message = model.firmwareUpdateMessage {
+                            Text(message)
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
-
-                            Button(
-                                model.isFirmwarePaired
-                                    ? "更新アクセスを再設定"
-                                    : "更新アクセスをペアリング"
-                            ) {
-                                model.pairFirmwareUpdates()
-                            }
-                            .disabled(
-                                !model.canManageFirmware
-                                    || model.isFirmwarePairingInFlight
-                                    || model.isFirmwareUpdateInFlight
-                            )
-
-                            Button("更新を確認") {
-                                model.checkForFirmwareUpdate()
-                            }
-                            .disabled(
-                                !model.canManageFirmware
-                                    || model.isCheckingFirmwareUpdate
-                                    || model.isFirmwareUpdateInFlight
-                            )
-
-                            if let version = model.availableFirmwareVersion {
-                                LabeledContent("利用可能", value: version)
-                                Button("ファームウェア \(version) へ更新") {
-                                    model.requestFirmwareUpdateConfirmation()
-                                }
-                                .disabled(
-                                    !model.canManageFirmware
-                                        || !model.isFirmwarePaired
-                                        || model.isFirmwareUpdateInFlight
-                                )
-                            }
-
-                            if model.isFirmwarePairingInFlight
-                                || model.isCheckingFirmwareUpdate
-                                || model.isFirmwareUpdateInFlight {
-                                ProgressView(firmwareProgressLabel)
-                                    .accessibilityLabel(firmwareProgressLabel)
-                            }
-
-                            if let message = model.firmwareUpdateMessage {
-                                Text(message)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
-                            Label("最初の1回はUSB書き込みが必要です", systemImage: "cable.connector")
-                                .foregroundStyle(Color.treeWarning)
                         }
-                    } header: {
-                        Text("ファームウェア更新")
-                    } footer: {
-                        Text("給水中は更新できません。USBなど安定した電源で実行し、再起動後もポンプ停止を確認します。")
+                    } else {
+                        Label("最初の1回はUSB書き込みが必要です", systemImage: "cable.connector")
+                            .foregroundStyle(.orange)
+                    }
+                } header: {
+                    Text("ファームウェア")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("ATOM本体のボタンを3秒間長押しし、60秒以内にペアリングしてください。")
+                        Text("給水中は更新できません。更新中はUSB電源アダプタなど安定した電源に接続してください。")
                     }
                 }
-                .scrollContentBackground(.hidden)
             }
-            .navigationTitle("接続設定")
+            .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button("キャンセル") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
-                        if model.saveEndpoint() {
+                        if model.saveEndpoint(endpointDraft) {
                             dismiss()
                         }
                     }
-                    .tint(Color.treeForest)
-                    .fontWeight(.bold)
-                    .disabled(!model.canAttemptEndpointChange)
+                    .fontWeight(.semibold)
+                    .disabled(!endpointChanged || !model.canAttemptEndpointChange)
                 }
             }
         }
@@ -158,9 +156,9 @@ struct SettingsView: View {
         }
         .onAppear {
             endpointFocused = false
+            model.clearEndpointValidationMessage()
             model.refreshFirmwareCapability()
         }
-        .presentationDetents([.medium, .large])
     }
 
     private var firmwareProgressLabel: String {

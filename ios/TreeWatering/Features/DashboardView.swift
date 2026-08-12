@@ -6,42 +6,55 @@ struct DashboardView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                TreeGlassBackdrop()
-
-                ScrollView {
-                    LazyVStack(spacing: 18) {
-                        dashboardHeader
-                        StatusCard(model: model)
-
-                        if let notice = model.notice {
-                            NoticeBanner(notice: notice)
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        DoseCard(model: model)
-                        HoldCard(model: model)
-                        deviceFooter
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.top, 12)
-                    .padding(.bottom, model.shouldShowStop ? 136 : 28)
-                    .frame(maxWidth: 620)
-                    .frame(maxWidth: .infinity)
+            List {
+                Section {
+                    DeviceStatusHeader(model: model)
                 }
-                .refreshable { model.refreshNow() }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if model.shouldShowStop {
-                        StopCard(model: model)
-                            .frame(maxWidth: 620)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity)
-                            .background(Color.treeCanvas.opacity(0.94))
+
+                if let notice = model.notice {
+                    Section {
+                        InlineNotice(notice: notice)
+                    }
+                }
+
+                if !model.shouldShowStop {
+                    WateringControlsSection(model: model)
+                }
+
+                if !model.shouldShowStop || model.shouldKeepHoldControlVisible {
+                    HoldControlSection(model: model)
+                }
+
+                if !model.shouldShowStop {
+                    Section {
+                        NavigationLink {
+                            DeviceInfoView(model: model)
+                        } label: {
+                            Label("デバイス情報", systemImage: "sensor.tag.radiowaves.forward")
+                        }
                     }
                 }
             }
-            .toolbar(.hidden, for: .navigationBar)
+            .listStyle(.insetGrouped)
+            .refreshable { await model.refreshAndWait() }
+            .navigationTitle("木のみず")
+            .toolbar {
+                if !model.shouldShowStop {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            model.showSettings = true
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel("設定")
+                    }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.shouldShowStop {
+                EmergencyStopBar(model: model)
+            }
         }
         .alert("給水を開始しますか", isPresented: $model.showDoseConfirmation) {
             Button("キャンセル", role: .cancel) {}
@@ -51,292 +64,186 @@ struct DashboardView: View {
         } message: {
             Text("ポンプを\(model.selectedDurationSeconds)秒動かします。開始操作は通信エラーでも自動再送しません。")
         }
-        .animation(.easeOut(duration: 0.22), value: model.notice)
-    }
-
-    private var dashboardHeader: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("木のみず")
-                    .font(.system(size: 30, weight: .heavy, design: .rounded))
-                    .foregroundStyle(Color.treeInk)
-                Text("BALCONY WATERING")
-                    .font(.caption2.weight(.bold))
-                    .tracking(1.6)
-                    .foregroundStyle(Color.treeInk.opacity(0.58))
-            }
-
-            Spacer()
-            GlassEffectContainer(spacing: 10) {
-                HStack(spacing: 10) {
-                    ConnectionPill(state: model.connectionState)
-                    Button {
-                        model.showSettings = true
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(Color.treeInk)
-                            .frame(width: 42, height: 42)
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .accessibilityLabel("接続設定")
-                }
-            }
-        }
-        .padding(.horizontal, 2)
-    }
-
-    private var deviceFooter: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-            Text(model.endpointHost)
-            Spacer()
-            if let version = model.status?.firmwareVersion {
-                Text("FW \(version)")
-            }
-        }
-        .font(.caption.monospaced().weight(.medium))
-        .foregroundStyle(Color.treeInk.opacity(0.64))
-        .padding(.horizontal, 6)
-        .padding(.top, 4)
     }
 }
 
-private struct StatusCard: View {
+private struct DeviceStatusHeader: View {
     @ObservedObject var model: DashboardViewModel
 
-    var body: some View {
-        VStack(spacing: 20) {
-            HStack(alignment: .center, spacing: 18) {
-                StatusOrb(
-                    availability: model.status?.wateringAvailability,
-                    isOnline: model.isOnline,
-                    isRefreshing: model.isRefreshing,
-                    remainingFraction: model.status.flatMap { status in
-                        WateringCountdownProgress.remainingFraction(
-                            remainingMilliseconds: status.remainingMilliseconds,
-                            scheduledMilliseconds: status.scheduledMilliseconds
-                        )
-                    }
-                )
+    private var availability: WateringAvailability? {
+        model.status?.wateringAvailability
+    }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(statusTitle)
-                        .font(.system(size: 25, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.treeInk)
-                    Text(statusDetail)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Color.treeInk.opacity(0.64))
+    private var title: String {
+        switch model.connectionState {
+        case .unconfigured: "未設定"
+        case .connecting: "接続中"
+        case .offline: "オフライン"
+        case .online: availability?.japaneseTitle ?? "状態を確認中"
+        }
+    }
+
+    private var detail: String {
+        switch model.connectionState {
+        case .unconfigured: "給水デバイスを追加してください"
+        case .connecting: "デバイスの応答を待っています"
+        case .offline: "電源とWi-Fiを確認してください"
+        case .online: availability?.japaneseDetail ?? "少しお待ちください"
+        }
+    }
+
+    private var symbolName: String {
+        switch model.connectionState {
+        case .unconfigured: "plus.circle.fill"
+        case .connecting: "antenna.radiowaves.left.and.right"
+        case .offline: "wifi.slash"
+        case .online: availability?.symbolName ?? "ellipsis.circle.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch model.connectionState {
+        case .unconfigured, .connecting: .orange
+        case .offline: .secondary
+        case .online: availability?.tint ?? .secondary
+        }
+    }
+
+    private var remainingSeconds: Int? {
+        guard let milliseconds = model.status?.remainingMilliseconds,
+              milliseconds > 0 else { return nil }
+        return max(1, Int(ceil(Double(milliseconds) / 1_000)))
+    }
+
+    private var remainingFraction: Double? {
+        guard let status = model.status else { return nil }
+        return WateringCountdownProgress.remainingFraction(
+            remainingMilliseconds: status.remainingMilliseconds,
+            scheduledMilliseconds: status.scheduledMilliseconds
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: symbolName)
+                    .font(.title2)
+                    .foregroundStyle(tint)
+                    .frame(width: 30)
+                    .symbolEffect(.pulse, options: .repeating, isActive: availability == .watering)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                    Text(detail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
 
-                    if let remaining = model.status?.remainingMilliseconds,
-                       remaining > 0 {
-                        Text("あと約 \(max(1, Int(ceil(Double(remaining) / 1_000))))秒")
-                            .font(.headline.monospacedDigit())
-                            .foregroundStyle(Color.treeWater)
-                            .padding(.top, 3)
+                Spacer(minLength: 8)
+
+                if model.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("状態を更新中")
+                }
+            }
+
+            if let remainingSeconds {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("残り \(remainingSeconds)秒")
+                        .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    if let remainingFraction {
+                        ProgressView(value: remainingFraction)
+                            .tint(.blue)
+                            .accessibilityLabel("給水の残り時間")
+                            .accessibilityValue("残り\(remainingSeconds)秒")
                     }
                 }
-                Spacer(minLength: 0)
             }
 
-            HStack(spacing: 10) {
-                MetricTile(
-                    icon: "sensor.fill",
-                    value: model.status.map { String($0.moistureADC) } ?? "—",
-                    label: "土センサー · ADC"
-                )
-                MetricTile(
-                    icon: "wifi",
-                    value: model.status.map { "\($0.wifiRSSI)" } ?? "—",
-                    label: "電波 · dBm"
-                )
+            if !model.shouldShowStop {
+                Label(connectionLabel, systemImage: connectionSymbol)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
-        .treeCard()
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
     }
 
-    private var statusTitle: String {
+    private var connectionLabel: String {
         switch model.connectionState {
-        case .unconfigured: "接続先が未設定です"
-        case .connecting: "端末を探しています"
-        case .offline: "端末に接続できません"
-        case .online: model.status?.wateringAvailability.japaneseTitle ?? "状態を取得中"
+        case .online: "デバイスに接続済み"
+        case .connecting: "接続を確認中"
+        case .offline: "デバイスに接続できません"
+        case .unconfigured: "デバイスが未設定です"
         }
     }
 
-    private var statusDetail: String {
+    private var connectionSymbol: String {
         switch model.connectionState {
-        case .unconfigured: "設定から端末アドレスを入力してください"
-        case .connecting: "同じWi-Fiにいるか確認しています"
-        case .offline: "電源・Wi-Fi・端末アドレスを確認してください"
-        case .online: model.status?.wateringAvailability.japaneseDetail ?? "少し待ってください"
+        case .online: "checkmark.circle.fill"
+        case .connecting: "arrow.triangle.2.circlepath"
+        case .offline: "exclamationmark.circle.fill"
+        case .unconfigured: "circle.dashed"
         }
     }
 }
 
-private struct StatusOrb: View {
-    let availability: WateringAvailability?
-    let isOnline: Bool
-    let isRefreshing: Bool
-    let remainingFraction: Double?
-
-    var tint: Color {
-        guard isOnline else { return Color.treeInk.opacity(0.28) }
-        return availability?.tint ?? .orange
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(tint.opacity(0.12))
-            if availability == .watering, let remainingFraction {
-                Circle()
-                    .stroke(tint.opacity(0.16), lineWidth: 7)
-                    .padding(5)
-                Circle()
-                    .trim(from: 0, to: remainingFraction)
-                    .stroke(
-                        tint,
-                        style: StrokeStyle(lineWidth: 7, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                    .padding(5)
-                    .animation(.linear(duration: 0.25), value: remainingFraction)
-            } else {
-                Circle()
-                    .stroke(tint.opacity(0.20), lineWidth: 6)
-                    .padding(5)
-            }
-            Image(systemName: availability == .watering ? "drop.fill" : "leaf.fill")
-                .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(tint)
-                .symbolEffect(.pulse, options: .repeating, isActive: availability == .watering)
-            if isRefreshing {
-                Circle()
-                    .trim(from: 0.02, to: 0.24)
-                    .stroke(tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .padding(15)
-            }
-        }
-        .frame(width: 94, height: 94)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct MetricTile: View {
-    let icon: String
-    let value: String
-    let label: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: icon)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.treeLeaf)
-            Text(value)
-                .font(.system(size: 22, weight: .bold, design: .monospaced))
-                .foregroundStyle(Color.treeInk)
-                .contentTransition(.numericText())
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(Color.treeInk.opacity(0.64))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(15)
-        .background(Color.treeCanvas.opacity(0.66))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-}
-
-private struct DoseCard: View {
+private struct WateringControlsSection: View {
     @ObservedObject var model: DashboardViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 17) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("時間を決めて給水")
-                        .font(.headline)
-                        .foregroundStyle(Color.treeInk)
-                    Text("指定時間で必ず自動停止")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.treeInk.opacity(0.64))
-                }
-                Spacer()
-                Image(systemName: "timer")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Color.treeWater)
-            }
-
-            HStack(spacing: 8) {
+        Section {
+            Picker("給水時間", selection: $model.selectedDurationSeconds) {
                 ForEach(model.durationOptions, id: \.self) { seconds in
-                    Button {
-                        model.selectedDurationSeconds = seconds
-                    } label: {
-                        Text("\(seconds)秒")
-                            .font(.subheadline.monospacedDigit().weight(.bold))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 40)
-                            .foregroundStyle(
-                                model.selectedDurationSeconds == seconds
-                                    ? Color.treeCanvas : Color.treeInk
-                            )
-                            .glassEffect(
-                                .regular
-                                    .tint(
-                                        model.selectedDurationSeconds == seconds
-                                            ? Color.treeForest : nil
-                                    )
-                                    .interactive(),
-                                in: Capsule()
-                            )
-                    }
-                    .buttonStyle(.plain)
+                    Text("\(seconds)秒").tag(seconds)
                 }
             }
+            .pickerStyle(.menu)
 
             Button {
                 model.requestDoseConfirmation()
             } label: {
                 HStack {
+                    Spacer()
                     if model.isActionInFlight {
                         ProgressView()
-                            .tint(
-                                model.canStartWatering
-                                    ? Color.treeCanvas : Color.treeInk
-                            )
+                            .tint(.white)
                     } else {
                         Image(systemName: "drop.fill")
                     }
-                    Text(model.isActionInFlight ? "開始を確認中…" : "\(model.selectedDurationSeconds)秒給水")
+                    Text("\(model.selectedDurationSeconds)秒間給水を開始")
                     Spacer()
-                    Image(systemName: "arrow.right")
                 }
-                .font(.headline)
-                .foregroundStyle(
-                    model.canStartWatering ? Color.white : Color.treeInk
-                )
-                .padding(.horizontal, 20)
-                .frame(maxWidth: .infinity)
-                .frame(height: 58)
+                .fontWeight(.semibold)
+                .frame(minHeight: 30)
             }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.roundedRectangle(radius: 18))
-            .tint(model.canStartWatering ? Color.treeForest : Color.treeInk.opacity(0.22))
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.treeActionFill)
             .disabled(!model.canStartWatering)
+        } header: {
+            Text("給水")
+        } footer: {
+            Text("設定した時間が経過すると、デバイス側で自動停止します。")
         }
-        .treeCard()
     }
 }
 
-private struct HoldCard: View {
+private struct HoldControlSection: View {
     @ObservedObject var model: DashboardViewModel
 
     private var acceptsTouch: Bool {
-        model.canStartWatering || model.holdGestureActive || model.holdStartInFlight || model.holdActive
+        model.canStartWatering
+            || model.holdGestureActive
+            || model.holdStartInFlight
+            || model.holdActive
     }
 
     private var unavailableMessage: String {
@@ -346,42 +253,32 @@ private struct HoldCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("微調整")
-                .font(.caption.weight(.bold))
-                .tracking(1.2)
-                .foregroundStyle(Color.treeInk.opacity(0.62))
-
-            HStack(spacing: 14) {
+        Section {
+            HStack(spacing: 12) {
                 Image(systemName: model.holdGestureActive ? "hand.tap.fill" : "hand.tap")
-                    .font(.title2.weight(.semibold))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("押している間だけ給水")
-                        .font(.headline)
+                    .foregroundStyle(model.holdGestureActive ? Color.blue : Color.accentColor)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.holdGestureActive ? "給水中・離すと停止" : "押している間だけ給水")
+                        .fontWeight(model.holdGestureActive ? .semibold : .regular)
                     Text(
                         model.holdStartInFlight
                             ? "開始を確認中…"
-                            : (acceptsTouch ? "離すとすぐ停止" : unavailableMessage)
+                            : (acceptsTouch ? "指を離すと停止します" : unavailableMessage)
                     )
-                        .font(.caption.weight(.medium))
-                        .opacity(acceptsTouch ? 0.68 : 1)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
-            .foregroundStyle(
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .opacity(acceptsTouch ? 1 : 0.5)
+            .listRowBackground(
                 model.holdGestureActive
-                    ? Color.treeCanvas
-                    : Color.treeInk.opacity(acceptsTouch ? 1 : 0.64)
+                    ? Color.blue.opacity(0.12)
+                    : Color(uiColor: .secondarySystemGroupedBackground)
             )
-            .padding(.horizontal, 18)
-            .frame(height: 70)
-            .glassEffect(
-                .regular
-                    .tint(model.holdGestureActive ? Color.treeWater : nil)
-                    .interactive(acceptsTouch),
-                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in
@@ -391,113 +288,126 @@ private struct HoldCard: View {
             )
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
-            .accessibilityHint(acceptsTouch ? "画面を押している間だけポンプが動きます" : unavailableMessage)
+            .accessibilityHint(
+                acceptsTouch
+                    ? "画面を押している間だけポンプが動きます"
+                    : unavailableMessage
+            )
             .sensoryFeedback(.impact(weight: .medium), trigger: model.holdGestureActive)
-
-            Label("通信が途切れても、端末側の安全機構が1.5秒以内に停止します", systemImage: "shield.checkered")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(Color.treeInk.opacity(0.72))
-                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text("手動給水")
+        } footer: {
+            Text("通信が途切れても、端末側の安全機構が1.5秒以内に停止します。")
         }
-        .treeCard()
     }
 }
 
-private struct StopCard: View {
+private struct DeviceInfoView: View {
     @ObservedObject var model: DashboardViewModel
 
     var body: some View {
-        Button {
-            model.stopNow()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "stop.fill")
-                    .font(.headline)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("今すぐ停止")
-                        .font(.headline)
-                    Text("確認が取れるまで再度押せます")
-                        .font(.caption.weight(.medium))
-                        .opacity(0.78)
+        List {
+            Section("デバイス") {
+                LabeledContent("名前") {
+                    Text(model.status?.deviceName ?? "—")
                 }
-                Spacer()
-                if model.isStopping {
-                    ProgressView().tint(.white)
+                LabeledContent("土センサー") {
+                    Text(model.status.map { "\($0.moistureADC) ADC" } ?? "—")
+                        .monospacedDigit()
+                }
+                LabeledContent("信号強度") {
+                    Text(model.status.map { "\($0.wifiRSSI) dBm" } ?? "—")
+                        .monospacedDigit()
+                }
+                LabeledContent("ファームウェア") {
+                    Text(model.status?.firmwareVersion ?? "—")
                 }
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 20)
-            .frame(maxWidth: .infinity)
-            .frame(height: 68)
-            .background(Color.treeWarning)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .shadow(color: Color.treeWarning.opacity(0.20), radius: 18, y: 9)
-        .accessibilityHint("停止確認中でも繰り返し押せます")
-    }
-}
 
-private struct NoticeBanner: View {
-    let notice: AppNotice
-
-    private var tint: Color {
-        switch notice.level {
-        case .info: .treeWater
-        case .warning: .treeWarning
-        case .success: .treeLeaf
+            Section("接続") {
+                LabeledContent("状態", value: connectionTitle)
+                LabeledContent("アドレス", value: model.endpointHost)
+            }
         }
+        .navigationTitle("デバイス情報")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            Image(systemName: notice.level == .warning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(tint)
-            Text(notice.text)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.treeInk)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .glassEffect(
-            .regular.tint(tint.opacity(0.12)),
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-    }
-}
-
-private struct ConnectionPill: View {
-    let state: DeviceConnectionState
-
-    private var color: Color {
-        switch state {
-        case .online: .treeLeaf
-        case .connecting: .orange
-        case .offline, .unconfigured: Color.treeInk.opacity(0.35)
-        }
-    }
-
-    private var title: String {
-        switch state {
+    private var connectionTitle: String {
+        switch model.connectionState {
         case .online: "接続済み"
         case .connecting: "確認中"
         case .offline: "オフライン"
         case .unconfigured: "未設定"
         }
     }
+}
+
+private struct EmergencyStopBar: View {
+    @ObservedObject var model: DashboardViewModel
 
     var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(title)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(Color.treeInk.opacity(0.70))
+        VStack(spacing: 6) {
+            Button {
+                model.stopNow()
+            } label: {
+                HStack {
+                    Spacer()
+                    Image(systemName: "stop.fill")
+                    Text("給水を停止")
+                    if model.isStopping {
+                        ProgressView()
+                            .tint(.white)
+                    }
+                    Spacer()
+                }
+                .fontWeight(.semibold)
+                .frame(minHeight: 30)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.red)
+            .accessibilityHint("停止確認中でも繰り返し押せます")
+
+            if model.isStopping {
+                Text("デバイスからの停止確認を待っています")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 32)
-        .glassEffect(.regular.tint(color.opacity(0.08)), in: Capsule())
-        .accessibilityLabel("接続状態、\(title)")
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+}
+
+private struct InlineNotice: View {
+    let notice: AppNotice
+
+    private var symbolName: String {
+        switch notice.level {
+        case .info: "info.circle.fill"
+        case .warning: "exclamationmark.triangle.fill"
+        case .success: "checkmark.circle.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch notice.level {
+        case .info: .blue
+        case .warning: .orange
+        case .success: .green
+        }
+    }
+
+    var body: some View {
+        Label {
+            Text(notice.text)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: symbolName)
+                .foregroundStyle(tint)
+        }
+        .font(.subheadline)
     }
 }
