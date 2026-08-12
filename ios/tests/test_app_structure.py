@@ -53,11 +53,8 @@ class IOSAppStructureTests(unittest.TestCase):
         ]:
             self.assertIn(marker, firmware)
         self.assertIn('#define DEVICE_NAME "balcony-watering"', firmware_config)
-        self.assertEqual(workflow.count('      - "firmware/src/main.cpp"'), 2)
-        self.assertEqual(
-            workflow.count('      - "firmware/include/config.example.h"'),
-            2,
-        )
+        self.assertEqual(workflow.count('      - "firmware/src/**"'), 2)
+        self.assertEqual(workflow.count('      - "firmware/include/**"'), 2)
         self.assertIn("NWBrowser", discovery)
         self.assertIn("BonjourDeviceCandidate.serviceType", discovery)
 
@@ -427,8 +424,10 @@ class IOSAppStructureTests(unittest.TestCase):
         )
 
         self.assertIn("StatusAdoptionGate()", view_model)
-        self.assertEqual(view_model.count("statusAdoptionGate.beginOperation()"), 4)
-        self.assertEqual(view_model.count("statusAdoptionGate.endOperation()"), 4)
+        # Dose, stop, hold-start, hold-end, and firmware upload each invalidate
+        # an in-flight status observation.
+        self.assertEqual(view_model.count("statusAdoptionGate.beginOperation()"), 5)
+        self.assertEqual(view_model.count("statusAdoptionGate.endOperation()"), 5)
 
         refresh = view_model[
             view_model.index("private func refresh()") : view_model.index(
@@ -672,11 +671,14 @@ class IOSAppStructureTests(unittest.TestCase):
         ) - allowed_placeholders
         self.assertEqual(found_addresses, set())
 
+        approved_public_hosts = {"api.github.com"}
         for host in re.findall(
             r"https?://([a-z0-9.-]+)", runtime_text, re.IGNORECASE
         ):
             self.assertTrue(
-                host in allowed_placeholders or host.endswith(".local"),
+                host in allowed_placeholders
+                or host in approved_public_hosts
+                or host.endswith(".local"),
                 f"public host embedded in iOS source: {host}",
             )
 

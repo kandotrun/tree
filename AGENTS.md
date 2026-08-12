@@ -26,9 +26,17 @@ that the pump turns off locally even if Wi-Fi, the bridge, or Hermes fails.
   short dose and stop, binds to loopback behind Cloudflare Tunnel, persists a
   global cooldown and rolling quotas in SQLite, rejects client-selected
   duration, and never exposes hold mode.
-- The ATOM API, embedded dashboard, and public gateway intentionally have no
-  application-layer authentication. The public gateway is anonymous by design;
-  its bounded command surface and device-local cutoff are the safety boundary.
+- The ATOM watering/status API, embedded dashboard, and public gateway
+  intentionally have no application-layer authentication. Firmware maintenance
+  is the only exception: physical-button pairing, a device-local key, a fresh
+  one-time nonce, and HMAC-SHA256 are required for every OTA upload.
+- OTA must cut GPIO 26 `LOW` before flash writes, reject non-idle or active-pump
+  states, validate target/version/size/streamed SHA-256 before switching the boot
+  partition, and never retry an ambiguous upload automatically.
+- Public OTA images must use `config.example.h` with
+  `PROVISIONING_REVISION 0`. Never release a binary built from local `config.h`.
+  The public gateway remains anonymous by design; its bounded command surface
+  and device-local cutoff are the watering safety boundary.
 - Keep automatic scheduling disabled until calibration, 72-hour power testing,
   siphon/drainage/leak checks, and a two-week supervised pilot pass.
 - Do not use moisture ADC values as an automatic start condition until real

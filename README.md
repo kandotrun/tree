@@ -60,9 +60,12 @@ cooldown/quotas, and machine-readable results.
   outlet points into a measuring container and commissioning checks pass.
 - The bridge refuses public ATOM destinations. Port forwarding, public DNS,
   and Tunnel ingress must never point directly to the ATOM.
-- The ATOM API, embedded dashboard, and public gateway intentionally have no
-  application-layer authentication. Keep the ATOM on a trusted WPA2/WPA3 LAN
-  or isolated IoT VLAN. Anonymous Internet traffic reaches only the NAS gateway,
+- The ATOM watering/status API, embedded dashboard, and public gateway
+  intentionally have no application-layer authentication. Firmware maintenance
+  is a separate boundary: physical-button pairing provisions a device-local key,
+  and each OTA upload requires a fresh nonce plus HMAC-SHA256. Keep the ATOM on
+  a trusted WPA2/WPA3 LAN or isolated IoT VLAN. Anonymous Internet traffic
+  reaches only the NAS gateway,
   which fixes each run to 10 seconds, applies a global 60-second cooldown plus
   rolling hourly/daily quotas, excludes hold mode, and always permits stop.
 
@@ -118,8 +121,12 @@ python3 firmware/scripts/generate_dashboard_header.py --check
 
 The native SwiftUI app connects directly to the ATOM on the same Wi-Fi. It
 provides live status, bounded confirmed doses, leased press-and-hold watering,
-and emergency stop without a cloud service or login. The installed device
-address is entered and stored on the iPhone; it is not committed to this repo.
+emergency stop, and explicitly confirmed firmware updates without a cloud
+service or login. Firmware 0.5.x needs one initial Mac/USB flash to install
+the OTA receiver; after that, routine updates preserve NVS settings and need no
+Mac or USB data connection. Stable power is still required during an update.
+The installed device address is entered and stored on the iPhone; it is not
+committed to this repo.
 
 ```bash
 brew install xcodegen
@@ -195,6 +202,10 @@ verification, retention, and shutdown.
   proxy and read-only mock on an iOS 26 simulator; CI preview screenshots do not
   exercise runtime discovery. v0.5.0 remains physically unverified until it is
   flashed to the ATOM and the boot-off, Bonjour, and status checks are repeated.
+- Firmware v0.6.0 adds physical-button/HMAC OTA, dual app partitions, and
+  unhealthy-first-boot rollback. It is build/test verified only; G39 pairing,
+  interrupted upload, normal OTA, rollback, and pump-low behavior remain
+  physically unverified until the checklist in `docs/firmware-ota.md` passes.
 - Measured flow, waterproofing, power endurance, drainage, siphon behavior, and
   the supervised pilot remain incomplete.
 - Automatic scheduling remains disabled by default.
@@ -205,6 +216,7 @@ verification, retention, and shutdown.
 - [Development and commissioning guide (Japanese)](docs/development-guide.md)
 - [Anonymous public gateway (Japanese)](docs/public-gateway.md)
 - [Moisture telemetry logger (Japanese)](docs/moisture-telemetry.md)
+- [iPhoneからのファームウェア更新](docs/firmware-ota.md)
 - [Agent and contributor rules](AGENTS.md)
 - [Security policy](SECURITY.md)
 

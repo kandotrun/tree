@@ -10,9 +10,15 @@ let package = Package(
     products: [
         .library(name: "TreeCore", targets: ["TreeCore"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.3.1")
+    ],
     targets: [
         .target(
             name: "TreeCore",
+            dependencies: [
+                .product(name: "Crypto", package: "swift-crypto")
+            ],
             path: "TreeCore"
         ),
         .testTarget(
