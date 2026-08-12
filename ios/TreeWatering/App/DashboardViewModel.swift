@@ -97,10 +97,8 @@ final class DashboardViewModel: ObservableObject {
             connectionState = .unconfigured
             return
         }
-        if previewMode,
-           let endpoint = try? DeviceEndpoint("http://balcony-watering.local") {
-            endpointInput = endpoint.baseURL.absoluteString
-            install(endpoint: endpoint)
+        if previewMode {
+            endpointInput = "http://balcony-watering.local/"
             status = wateringPreview
                 ? Self.makeWateringPreviewStatus()
                 : Self.makePreviewStatus()
@@ -116,7 +114,7 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
-    var hasEndpoint: Bool { api != nil }
+    var hasEndpoint: Bool { api != nil || (isPreviewMode && status != nil) }
     var isOnline: Bool { connectionState == .online }
 
     var currentFirmwareVersion: String {
@@ -206,6 +204,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func saveEndpoint(_ proposedValue: String) -> Bool {
+        guard !isPreviewMode else { return false }
         guard canAttemptEndpointChange else {
             endpointValidationMessage = "給水操作が完了してから接続先を変更してください"
             return false
@@ -234,6 +233,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func confirmOfflineEndpointChange() -> Bool {
+        guard !isPreviewMode else { return false }
         defer {
             pendingEndpoint = nil
             showForceEndpointConfirmation = false
@@ -318,6 +318,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func pairFirmwareUpdates() {
+        guard !isPreviewMode else { return }
         guard canManageFirmware,
               firmwareUpdateSupported,
               !isFirmwarePairingInFlight,
@@ -359,6 +360,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func checkForFirmwareUpdate() {
+        guard !isPreviewMode else { return }
         guard canManageFirmware,
               firmwareUpdateSupported,
               !isCheckingFirmwareUpdate,
@@ -411,6 +413,7 @@ final class DashboardViewModel: ObservableObject {
 
     func installConfirmedFirmware() {
         showFirmwareUpdateConfirmation = false
+        guard !isPreviewMode else { return }
         guard canManageFirmware,
               isFirmwarePaired,
               let api,
@@ -520,6 +523,17 @@ final class DashboardViewModel: ObservableObject {
         Task { await refresh() }
     }
 
+    func refreshAndWait() async {
+        while activeRefreshGeneration != nil, !Task.isCancelled {
+            do {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            } catch {
+                return
+            }
+        }
+        await refresh()
+    }
+
     func requestDoseConfirmation() {
         guard canStartWatering else { return }
         showDoseConfirmation = true
@@ -527,6 +541,7 @@ final class DashboardViewModel: ObservableObject {
 
     func startConfirmedDose() {
         showDoseConfirmation = false
+        guard !isPreviewMode else { return }
         guard canStartWatering,
               let coordinator,
               let maximum = status?.maximumDurationSeconds else { return }
@@ -556,6 +571,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func stopNow() {
+        guard !isPreviewMode else { return }
         guard let coordinator else { return }
         operationGeneration += 1
         let generationAtStop = operationGeneration
@@ -589,6 +605,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func holdGestureBegan() {
+        guard !isPreviewMode else { return }
         guard canStartWatering, !holdGestureActive, let coordinator else { return }
         holdGestureActive = true
         holdStartInFlight = true
@@ -623,6 +640,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func holdGestureEnded() {
+        guard !isPreviewMode else { return }
         let shouldEndHold = holdGestureActive || holdStartInFlight || holdActive
         holdGestureActive = false
         guard !isStopping, shouldEndHold, !holdEndInFlight else { return }
@@ -730,6 +748,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func applyEndpoint(_ endpoint: DeviceEndpoint) -> Bool {
+        guard !isPreviewMode else { return false }
         stopDiscovery(invalidate: true)
         let normalized = endpoint.baseURL.absoluteString
         defaults.set(normalized, forKey: Self.endpointDefaultsKey)
@@ -743,6 +762,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func install(endpoint: DeviceEndpoint) {
+        guard !isPreviewMode else { return }
         endpointGeneration += 1
         lastSafetySnapshotRevision = 0
         activeRefreshGeneration = nil
@@ -782,6 +802,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func refresh() async {
+        guard !isPreviewMode else { return }
         let generationAtStart = endpointGeneration
         guard activeRefreshGeneration == nil,
               let api,

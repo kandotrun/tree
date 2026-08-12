@@ -112,6 +112,23 @@ class AppleNativeUIStructureTests(unittest.TestCase):
         self.assertNotIn(".disabled(model.isStopping)", stop)
         self.assertNotIn(".glassEffect(", stop)
 
+        navigation_end = source.index(".safeAreaInset(edge: .bottom")
+        self.assertIn("NavigationStack {", source[:navigation_end])
+        self.assertIn("DeviceInfoView(model: model)", source[:navigation_end])
+        self.assertIn("}\n        .safeAreaInset(edge: .bottom", source)
+
+    def test_pull_to_refresh_waits_for_the_status_request(self) -> None:
+        dashboard = DASHBOARD.read_text(encoding="utf-8")
+        view_model = (
+            IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(".refreshable { await model.refreshAndWait() }", dashboard)
+        self.assertIn("func refreshAndWait() async", view_model)
+        refresh_and_wait = view_model[view_model.index("func refreshAndWait() async") :]
+        self.assertIn("while activeRefreshGeneration != nil", refresh_and_wait)
+        self.assertIn("await refresh()", refresh_and_wait)
+
     def test_raw_device_metrics_move_to_a_native_detail_screen(self) -> None:
         source = DASHBOARD.read_text(encoding="utf-8")
 
@@ -131,6 +148,13 @@ class AppleNativeUIStructureTests(unittest.TestCase):
         self.assertIn('Button("デバイスのアドレスを入力")', source)
         self.assertIn(".controlSize(.large)", source)
         self.assertIn("private struct ManualEndpointView", source)
+        manual = source[source.index("private struct ManualEndpointView") :]
+        self.assertIn("@State private var endpointDraft", manual)
+        self.assertIn("text: $endpointDraft", manual)
+        self.assertIn("model.saveEndpoint(endpointDraft)", manual)
+        manual_on_appear = manual[manual.index(".onAppear {") :]
+        self.assertIn("model.clearEndpointValidationMessage()", manual_on_appear)
+        self.assertNotIn("text: $model.endpointInput", manual)
         self.assertNotIn("TreeGlassBackdrop", source)
         self.assertNotIn("GlassEffectContainer", source)
         self.assertNotIn('.font(.system(size: 42', source)
@@ -146,6 +170,8 @@ class AppleNativeUIStructureTests(unittest.TestCase):
         self.assertIn("text: $endpointDraft", source)
         self.assertIn('Button("キャンセル")', source)
         self.assertIn("model.saveEndpoint(endpointDraft)", source)
+        settings_on_appear = source[source.index(".onAppear {") :]
+        self.assertIn("model.clearEndpointValidationMessage()", settings_on_appear)
         self.assertIn("!endpointChanged", source)
         self.assertNotIn('Section("このアプリ")', source)
         self.assertNotIn('LabeledContent("クラウド"', source)
@@ -166,6 +192,8 @@ class AppleNativeUIStructureTests(unittest.TestCase):
         self.assertNotIn("TreeGlassBackdrop", source)
         self.assertNotIn("TreeCardModifier", source)
         self.assertNotIn("treeCard()", source)
+        self.assertIn('case .unknown: "状態を確認しています"', source)
+        self.assertNotIn('case .unknown: "対応していないデバイス状態です"', source)
 
         colors = accent["colors"]
         self.assertEqual(len(colors), 2)
@@ -262,7 +290,12 @@ class AppleNativeUIStructureTests(unittest.TestCase):
         self.assertIn("-ui-preview-settings", workflow)
         self.assertIn('"-ui-preview-settings"', view_model)
         self.assertNotIn('DeviceEndpoint("http://127.0.0.1")', view_model)
-        self.assertIn('DeviceEndpoint("http://balcony-watering.local")', view_model)
+        preview_setup = view_model[
+            view_model.index("if previewMode {") : view_model.index("let saved =")
+        ]
+        self.assertNotIn("DeviceEndpoint(", preview_setup)
+        self.assertNotIn("install(endpoint:", preview_setup)
+        self.assertIn('endpointInput = "http://balcony-watering.local/"', preview_setup)
         self.assertIn('"firmware_version":"0.6.0"', view_model)
         self.assertIn('"ota_supported":true', view_model)
 
@@ -272,6 +305,52 @@ class AppleNativeUIStructureTests(unittest.TestCase):
             )
         ]
         self.assertIn("guard !isPreviewMode else { return }", refresh)
+
+    def test_preview_mode_rejects_every_external_operation(self) -> None:
+        source = (
+            IOS_ROOT / "TreeWatering/App/DashboardViewModel.swift"
+        ).read_text(encoding="utf-8")
+
+        void_operations = [
+            "pairFirmwareUpdates",
+            "checkForFirmwareUpdate",
+            "installConfirmedFirmware",
+            "startConfirmedDose",
+            "stopNow",
+            "holdGestureBegan",
+            "holdGestureEnded",
+        ]
+        for name in void_operations:
+            start = source.index(f"func {name}(")
+            body = source[start : source.index("\n    }", start) + 6]
+            self.assertIn(
+                "guard !isPreviewMode else { return }",
+                body,
+                msg=f"{name} must fail closed in preview mode",
+            )
+
+        save_start = source.index("func saveEndpoint(_ proposedValue:")
+        save_body = source[save_start : source.index("\n    }", save_start) + 6]
+        self.assertIn("guard !isPreviewMode else { return false }", save_body)
+
+        for name in ["confirmOfflineEndpointChange", "applyEndpoint"]:
+            start = source.index(f"func {name}(")
+            body = source[start : source.index("\n    }", start) + 6]
+            self.assertIn(
+                "guard !isPreviewMode else { return false }",
+                body,
+                msg=f"{name} must fail closed in preview mode",
+            )
+
+        install_start = source.index("func install(endpoint:")
+        install_body = source[
+            install_start : source.index("\n    }", install_start) + 6
+        ]
+        self.assertIn("guard !isPreviewMode else { return }", install_body)
+
+        refresh_start = source.index("private func refresh() async")
+        refresh_body = source[refresh_start : source.index("\n    }", refresh_start) + 6]
+        self.assertIn("guard !isPreviewMode else { return }", refresh_body)
 
     def test_ax5_scroll_reachability_is_exercised_by_xcuitest(self) -> None:
         project = PROJECT.read_text(encoding="utf-8")

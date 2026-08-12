@@ -47,7 +47,13 @@ struct SetupView: View {
 private struct ManualEndpointView: View {
     @ObservedObject var model: DashboardViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var endpointDraft: String
     @FocusState private var endpointFocused: Bool
+
+    init(model: DashboardViewModel) {
+        self.model = model
+        _endpointDraft = State(initialValue: model.endpointInput)
+    }
 
     var body: some View {
         NavigationStack {
@@ -55,7 +61,7 @@ private struct ManualEndpointView: View {
                 Section {
                     TextField(
                         "端末アドレス",
-                        text: $model.endpointInput,
+                        text: $endpointDraft,
                         prompt: Text("例：http://<ATOMのLAN内IP>")
                             .foregroundStyle(.secondary)
                     )
@@ -65,6 +71,9 @@ private struct ManualEndpointView: View {
                     .keyboardType(.URL)
                     .submitLabel(.go)
                     .focused($endpointFocused)
+                    .onChange(of: endpointDraft) {
+                        model.clearEndpointValidationMessage()
+                    }
                     .onSubmit { connect() }
                     .accessibilityHint(
                         model.endpointValidationMessage
@@ -95,10 +104,13 @@ private struct ManualEndpointView: View {
                 }
             }
         }
+        .onAppear {
+            model.clearEndpointValidationMessage()
+        }
     }
 
     private func connect() {
-        if model.saveEndpoint() {
+        if model.saveEndpoint(endpointDraft) {
             endpointFocused = false
             dismiss()
         }

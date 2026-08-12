@@ -156,6 +156,7 @@ struct SettingsView: View {
         }
         .onAppear {
             endpointFocused = false
+            model.clearEndpointValidationMessage()
             model.refreshFirmwareCapability()
         }
     }

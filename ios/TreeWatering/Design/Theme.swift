@@ -28,7 +28,7 @@ extension WateringAvailability {
         case .unarmed: "実機テスト後に端末を有効化してください"
         case .watering: "デバイスのタイマーで自動停止します"
         case .error: "デバイスと配線を確認してください"
-        case .unknown: "対応していないデバイス状態です"
+        case .unknown: "状態を確認しています"
         }
     }
 

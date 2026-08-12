@@ -36,7 +36,7 @@ struct DashboardView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .refreshable { model.refreshNow() }
+            .refreshable { await model.refreshAndWait() }
             .navigationTitle("木のみず")
             .toolbar {
                 if !model.shouldShowStop {
@@ -50,10 +50,10 @@ struct DashboardView: View {
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if model.shouldShowStop {
-                    EmergencyStopBar(model: model)
-                }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.shouldShowStop {
+                EmergencyStopBar(model: model)
             }
         }
         .alert("給水を開始しますか", isPresented: $model.showDoseConfirmation) {
