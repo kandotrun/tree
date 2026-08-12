@@ -284,7 +284,13 @@ class AppleNativeUIStructureTests(unittest.TestCase):
         self.assertIn("TreeWateringUITests", project[project.index("schemes:") :])
         self.assertIn("xcodebuild", workflow)
         self.assertIn("-only-testing:TreeWateringUITests", workflow)
-        self.assertIn("accessibility-extra-extra-extra-large", workflow)
+        self.assertIn("timeout-minutes: 30", workflow)
+        self.assertIn("-derivedDataPath ios/build", workflow)
+        self.assertIn("-parallel-testing-enabled NO", workflow)
+        self.assertIn("-test-timeouts-enabled YES", workflow)
+        self.assertIn("-default-test-execution-time-allowance 90", workflow)
+        self.assertIn("-maximum-test-execution-time-allowance 180", workflow)
+        self.assertIn("content_size accessibility-extra-extra-extra-large", workflow)
 
         for label in [
             'app.staticTexts["デバイス情報"]',

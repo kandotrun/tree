@@ -27,7 +27,7 @@ concurrency:
 jobs:
   simulator:
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install XcodeGen
@@ -84,7 +84,13 @@ jobs:
           xcodebuild \
             -project ios/TreeWatering.xcodeproj \
             -scheme TreeWatering \
+            -configuration Debug \
             -destination "platform=iOS Simulator,id=$simulator_id" \
+            -derivedDataPath ios/build \
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 90 \
+            -maximum-test-execution-time-allowance 180 \
             -only-testing:TreeWateringUITests \
             test
           xcrun simctl launch --terminate-running-process "$simulator_id" run.kan.treewatering -ui-preview
